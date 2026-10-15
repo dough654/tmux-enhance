@@ -126,6 +126,27 @@ impl Theme {
             tmux_color(self.accent)
         )
     }
+
+    pub fn agent_overlay_styles(self, status: &str) -> (String, String) {
+        let background = match status {
+            "permission" => self.agent_permission_background,
+            "input" => self.agent_input_background,
+            "ready" => self.agent_ready_background,
+            _ => self.accent,
+        };
+        (
+            format!(
+                "fg={},bg={}",
+                tmux_color(self.foreground),
+                tmux_color(self.background)
+            ),
+            format!(
+                "fg={},bg={},bold",
+                tmux_color(background),
+                tmux_color(self.background)
+            ),
+        )
+    }
 }
 
 fn tmux_color(color: Color) -> String {

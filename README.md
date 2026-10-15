@@ -26,6 +26,21 @@ Searching automatically reveals matching child windows beneath their parent sess
 
 Press `prefix + a` to search OpenCode and Claude Code agent panes together. Their integrations report the exact session attached to each tmux pane and distinguish `processing`, `permission`, `input`, and `ready`; OpenCode title/path matching remains available as a fallback for unintegrated panes. Statuses refresh once per second while the picker is open. Agents use the same MRU behavior as sessions: the pane you came from is prioritized and the currently focused agent is moved to the bottom.
 
+When an agent enters `permission` or `input`, tmux-enhance shows a small floating pane in the top-right of each active tmux window. Floating panes require tmux 3.7 or newer and, unlike popups, are non-modal: the pane underneath stays focused and continues receiving input. Repeated heartbeats are deduplicated, alerts are suppressed when that agent pane is already focused, and later `processing` or `ready` reports resolve the event automatically. Click a notification to jump directly to that agent, or press `prefix + Enter` to jump to the newest unresolved agent. Clicking requires tmux mouse support (`set -g mouse on`).
+
+The overlay size and lifetime are configurable. `ready` alerts, terminal bells, and host-side `notify-send` notifications are opt-in:
+
+```tmux
+set -g @enhance-alerts 'on'
+set -g @enhance-alert-overlay 'on'
+set -g @enhance-alert-duration 15
+set -g @enhance-alert-width 50
+set -g @enhance-alert-height 6
+set -g @enhance-alert-ready 'off'
+set -g @enhance-alert-bell 'off'
+set -g @enhance-alert-native 'off'
+```
+
 ### OpenCode integration
 
 Loading `tmux-enhance.tmux` automatically registers the bundled terminal plugin in OpenCode's global `cli.json`. Registration is idempotent and preserves unrelated settings and plugins. Existing OpenCode clients reload valid settings automatically; newly opened clients start reporting immediately.
@@ -104,9 +119,3 @@ Harpoon changes appear as non-modal, theme-aware status-right toasts. Their dura
 ```tmux
 set -g @enhance-toast-duration 4
 ```
-
-## Planned bindings
-
-| Binding | Action |
-| --- | --- |
-| `prefix + Enter` | Jump to the latest agent waiting for input |

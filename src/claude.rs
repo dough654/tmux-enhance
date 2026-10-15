@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 
-use crate::store::Store;
+use crate::alerts;
 
 const HOOK_EVENTS: &[&str] = &[
     "SessionStart",
@@ -43,7 +43,7 @@ pub fn handle_hook() -> Result<()> {
         return Ok(());
     };
     let title = hook_title(&input);
-    Store::open()?.report_agent(&pane_id, "claude", session_id, status, &title)
+    alerts::report(&pane_id, "claude", session_id, status, &title)
 }
 
 pub fn install_integration(binary: &Path) -> Result<bool> {

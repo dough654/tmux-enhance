@@ -7,6 +7,14 @@ tmux set-option -gq @enhance-bin "$default_bin"
 tmux set-option -gq @enhance-picker-width '90%'
 tmux set-option -gq @enhance-picker-height '80%'
 tmux set-option -ogq @enhance-toast-duration '4'
+tmux set-option -ogq @enhance-alerts 'on'
+tmux set-option -ogq @enhance-alert-overlay 'on'
+tmux set-option -ogq @enhance-alert-duration '15'
+tmux set-option -ogq @enhance-alert-width '50'
+tmux set-option -ogq @enhance-alert-height '6'
+tmux set-option -ogq @enhance-alert-ready 'off'
+tmux set-option -ogq @enhance-alert-bell 'off'
+tmux set-option -ogq @enhance-alert-native 'off'
 
 enhance_bin="$(tmux show-option -gqv @enhance-bin)"
 picker_width="$(tmux show-option -gqv @enhance-picker-width)"
@@ -37,6 +45,13 @@ tmux bind-key a display-popup -E \
   -h "$picker_height" \
   -d "#{pane_current_path}" \
   "\"$enhance_bin\" picker agents"
+
+tmux bind-key Enter run-shell "\"$enhance_bin\" alert-jump"
+
+tmux bind-key -T root MouseDown1Pane if-shell -F -t = \
+  '#{!=:#{@enhance-alert-source},}' \
+  "run-shell -t = \"\\\"$enhance_bin\\\" alert-click #{q:@enhance-alert-source}\"" \
+  'select-pane -t = ; send-keys -M'
 
 tmux bind-key h switch-client -T enhance-harpoon
 tmux bind-key -T enhance-harpoon a run-shell "\"$enhance_bin\" harpoon add"

@@ -84,12 +84,32 @@ impl Tmux {
         self.output(["show-options", "-gqv", name])
     }
 
+    pub fn option_raw(&self, name: &str) -> Result<String> {
+        self.output_preserving(["show-options", "-gqv", name])
+    }
+
     pub fn current_session_name(&self) -> Result<String> {
         self.output(["display-message", "-p", "#{session_name}"])
     }
 
     pub fn current_pane_id(&self) -> Result<String> {
         self.output(["display-message", "-p", "#{pane_id}"])
+    }
+
+    pub fn active_client_panes(&self) -> Result<Vec<String>> {
+        Ok(self
+            .output(["list-clients", "-F", "#{pane_id}"])?
+            .lines()
+            .map(str::to_string)
+            .collect())
+    }
+
+    pub fn client_ttys(&self) -> Result<Vec<String>> {
+        Ok(self
+            .output(["list-clients", "-F", "#{client_tty}"])?
+            .lines()
+            .map(str::to_string)
+            .collect())
     }
 
     pub fn switch_to_session(&self, session_name: &str) -> Result<()> {
@@ -132,6 +152,104 @@ impl Tmux {
             "-t",
             session_id,
         ])
+    }
+
+    pub fn switch_to_pane(&self, window: &WindowTarget) -> Result<()> {
+        let client = self.current_client()?;
+        self.run([
+            "switch-client",
+            "-c",
+            &client,
+            "-t",
+            &window.session_id,
+            ";",
+            "select-window",
+            "-t",
+            &window.window_id,
+            ";",
+            "select-pane",
+            "-t",
+            &window.pane_id,
+        ])
+    }
+
+    pub fn window_dimensions(&self, pane_id: &str) -> Result<(u16, u16)> {
+        let separator = FIELD_SEPARATOR.to_string();
+        let format = ["#{window_width}", "#{window_height}"].join(&separator);
+        let output = self.output(["display-message", "-p", "-t", pane_id, &format])?;
+        let Some((width, height)) = output.split_once(FIELD_SEPARATOR) else {
+            bail!("unexpected tmux window dimensions");
+        };
+        Ok((
+            width.parse().context("parsing tmux window width")?,
+            height.parse().context("parsing tmux window height")?,
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_floating_alert(
+        &self,
+        target_pane: &str,
+        source_pane: &str,
+        width: u16,
+        height: u16,
+        x: u16,
+        y: u16,
+        style: &str,
+        border_style: &str,
+        command: &str,
+    ) -> Result<()> {
+        let width = width.to_string();
+        let height = height.to_string();
+        let x = x.to_string();
+        let y = y.to_string();
+        let pane_id = self.output([
+            "new-pane",
+            "-d",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-t",
+            target_pane,
+            "-x",
+            &width,
+            "-y",
+            &height,
+            "-X",
+            &x,
+            "-Y",
+            &y,
+            "-s",
+            style,
+            "-S",
+            border_style,
+            "-R",
+            border_style,
+            command,
+        ])?;
+        self.run([
+            "set-option",
+            "-pt",
+            &pane_id,
+            "@enhance-alert-source",
+            source_pane,
+        ])?;
+        self.run(["select-pane", "-t", &pane_id, "-T", "tmux-enhance alert"])
+    }
+
+    pub fn close_floating_alerts(&self, source_pane: Option<&str>) -> Result<()> {
+        let separator = FIELD_SEPARATOR.to_string();
+        let format = ["#{pane_id}", "#{@enhance-alert-source}"].join(&separator);
+        let output = self.output(["list-panes", "-a", "-F", &format])?;
+        for line in output.lines() {
+            let Some((pane_id, source)) = line.split_once(FIELD_SEPARATOR) else {
+                continue;
+            };
+            if !source.is_empty() && source_pane.is_none_or(|expected| expected == source) {
+                let _ = self.run(["kill-pane", "-t", pane_id]);
+            }
+        }
+        Ok(())
     }
 
     fn current_client(&self) -> Result<String> {

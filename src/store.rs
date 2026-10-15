@@ -30,6 +30,22 @@ pub struct AgentReport {
     pub reported_at: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentTransition {
+    pub report: AgentReport,
+    pub changed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentAlert {
+    pub pane_id: String,
+    pub provider: String,
+    pub session_id: String,
+    pub status: String,
+    pub title: String,
+    pub created_at: i64,
+}
+
 pub struct Store {
     connection: Connection,
 }
@@ -68,6 +84,14 @@ impl Store {
                 status TEXT NOT NULL,
                 title TEXT NOT NULL,
                 reported_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS agent_alerts (
+                pane_id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                title TEXT NOT NULL,
+                created_at INTEGER NOT NULL
             );",
         )?;
         let has_provider = {
@@ -214,7 +238,29 @@ impl Store {
         session_id: &str,
         status: &str,
         title: &str,
-    ) -> Result<()> {
+    ) -> Result<AgentTransition> {
+        let previous = self
+            .connection
+            .query_row(
+                "SELECT provider, session_id, status FROM agent_reports WHERE pane_id = ?1",
+                [pane_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let changed = previous.as_ref().is_none_or(
+            |(previous_provider, previous_session, previous_status)| {
+                previous_provider != provider
+                    || previous_session != session_id
+                    || previous_status != status
+            },
+        );
+        let now = timestamp_millis();
         self.connection.execute(
             "INSERT INTO agent_reports (pane_id, provider, session_id, status, title, reported_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -227,16 +273,49 @@ impl Store {
                     ELSE excluded.title
                 END,
                 reported_at = excluded.reported_at",
-            params![
-                pane_id,
-                provider,
-                session_id,
-                status,
-                title,
-                timestamp_millis()
-            ],
+            params![pane_id, provider, session_id, status, title, now],
         )?;
-        Ok(())
+        let report = self.connection.query_row(
+            "SELECT pane_id, provider, session_id, status, title, reported_at
+             FROM agent_reports WHERE pane_id = ?1",
+            [pane_id],
+            |row| {
+                Ok(AgentReport {
+                    pane_id: row.get(0)?,
+                    provider: row.get(1)?,
+                    session_id: row.get(2)?,
+                    status: row.get(3)?,
+                    title: row.get(4)?,
+                    reported_at: row.get(5)?,
+                })
+            },
+        )?;
+
+        if matches!(status, "permission" | "input") {
+            if changed {
+                self.connection.execute(
+                    "INSERT INTO agent_alerts
+                        (pane_id, provider, session_id, status, title, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                     ON CONFLICT(pane_id) DO UPDATE SET
+                        provider = excluded.provider,
+                        session_id = excluded.session_id,
+                        status = excluded.status,
+                        title = excluded.title,
+                        created_at = excluded.created_at",
+                    params![pane_id, provider, session_id, status, report.title, now],
+                )?;
+            } else {
+                self.connection.execute(
+                    "UPDATE agent_alerts SET title = ?1 WHERE pane_id = ?2",
+                    params![report.title, pane_id],
+                )?;
+            }
+        } else {
+            self.acknowledge_agent_alert(pane_id)?;
+        }
+
+        Ok(AgentTransition { report, changed })
     }
 
     pub fn agent_reports(&self) -> Result<HashMap<String, AgentReport>> {
@@ -256,6 +335,32 @@ impl Store {
         })?;
         rows.collect::<rusqlite::Result<HashMap<_, _>>>()
             .map_err(Into::into)
+    }
+
+    pub fn agent_alerts(&self) -> Result<Vec<AgentAlert>> {
+        let mut statement = self.connection.prepare(
+            "SELECT pane_id, provider, session_id, status, title, created_at
+             FROM agent_alerts ORDER BY created_at DESC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(AgentAlert {
+                pane_id: row.get(0)?,
+                provider: row.get(1)?,
+                session_id: row.get(2)?,
+                status: row.get(3)?,
+                title: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn acknowledge_agent_alert(&self, pane_id: &str) -> Result<bool> {
+        Ok(self
+            .connection
+            .execute("DELETE FROM agent_alerts WHERE pane_id = ?1", [pane_id])?
+            > 0)
     }
 }
 
@@ -347,9 +452,10 @@ mod tests {
     #[test]
     fn records_authoritative_agent_reports() {
         let store = store();
-        store
+        let transition = store
             .report_agent("%12", "opencode", "ses_123", "permission", "Review")
             .unwrap();
+        assert!(transition.changed);
         let reports = store.agent_reports().unwrap();
         let report = reports.get("%12").unwrap();
         assert_eq!(report.provider, "opencode");
@@ -372,5 +478,27 @@ mod tests {
         let report = reports.get("%12").unwrap();
         assert_eq!(report.status, "ready");
         assert_eq!(report.title, "Fix tests");
+    }
+
+    #[test]
+    fn queues_attention_transitions_once_and_resolves_them() {
+        let store = store();
+        let first = store
+            .report_agent("%12", "claude", "session-123", "input", "Choose")
+            .unwrap();
+        assert!(first.changed);
+        assert_eq!(store.agent_alerts().unwrap().len(), 1);
+        let created_at = store.agent_alerts().unwrap()[0].created_at;
+
+        let repeated = store
+            .report_agent("%12", "claude", "session-123", "input", "Choose")
+            .unwrap();
+        assert!(!repeated.changed);
+        assert_eq!(store.agent_alerts().unwrap()[0].created_at, created_at);
+
+        store
+            .report_agent("%12", "claude", "session-123", "processing", "")
+            .unwrap();
+        assert!(store.agent_alerts().unwrap().is_empty());
     }
 }

@@ -1,3 +1,4 @@
+mod alerts;
 mod app;
 mod claude;
 mod harpoon;
@@ -39,6 +40,21 @@ enum Command {
     Doctor,
     /// Print discovered agent panes and their status.
     Agents,
+    /// Jump to the newest agent that needs attention.
+    AlertJump,
+    #[command(hide = true)]
+    AlertClick { pane_id: String },
+    #[command(hide = true)]
+    AlertOverlay {
+        #[arg(long)]
+        status: String,
+        #[arg(long)]
+        location: String,
+        #[arg(long)]
+        width: u16,
+        #[arg(long)]
+        duration: u16,
+    },
     /// Manage the bundled OpenCode TUI integration.
     #[command(name = "opencode")]
     OpenCode {
@@ -165,6 +181,14 @@ fn main() -> Result<()> {
         } => harpoon::list(),
         Command::Doctor => doctor(),
         Command::Agents => list_agents(),
+        Command::AlertJump => alerts::jump_latest(),
+        Command::AlertClick { pane_id } => alerts::jump_to(&pane_id),
+        Command::AlertOverlay {
+            status,
+            location,
+            width,
+            duration,
+        } => alerts::run_overlay(&status, &location, width, duration),
         Command::OpenCode {
             command:
                 OpenCodeCommand::Install {
@@ -218,7 +242,7 @@ fn main() -> Result<()> {
             if opencode::AgentStatus::from_report(&status).is_none() {
                 anyhow::bail!("unsupported OpenCode agent status: {status}");
             }
-            store::Store::open()?.report_agent(&pane_id, "opencode", &session_id, &status, &title)
+            alerts::report(&pane_id, "opencode", &session_id, &status, &title)
         }
         Command::ClaudeCode {
             command: ClaudeCodeCommand::Install { binary, quiet },

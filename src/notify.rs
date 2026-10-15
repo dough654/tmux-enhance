@@ -10,7 +10,7 @@ const TOKEN_OPTION: &str = "@enhance-toast-token";
 pub fn show(message: &str) -> Result<()> {
     let tmux = Tmux::from_env();
     if tmux.option(TOKEN_OPTION)?.is_empty() {
-        let original = tmux.option("status-right")?;
+        let original = tmux.option_raw("status-right")?;
         tmux.set_option(ORIGINAL_OPTION, &original)?;
     }
 
@@ -43,7 +43,7 @@ pub fn clear(token: &str) -> Result<()> {
     if tmux.option(TOKEN_OPTION)? != token {
         return Ok(());
     }
-    let original = tmux.option(ORIGINAL_OPTION)?;
+    let original = tmux.option_raw(ORIGINAL_OPTION)?;
     tmux.set_option("status-right", &original)?;
     tmux.unset_option(TOKEN_OPTION)?;
     tmux.unset_option(ORIGINAL_OPTION)
