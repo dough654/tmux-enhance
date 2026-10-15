@@ -22,11 +22,25 @@ pub enum PickerAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewPane {
+    pub title: String,
+    pub pane_id: String,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct RenderedPreview {
+    pub title: String,
+    pub text: Text<'static>,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PickerEntry {
     pub display_text: String,
     pub searchable_text: String,
     pub preview_title: String,
-    pub pane_id: Option<String>,
+    pub preview_panes: Vec<PreviewPane>,
     pub preview_message: Option<String>,
     pub current: bool,
     pub harpoon_slot: Option<u8>,
@@ -48,6 +62,7 @@ pub struct App {
     pub selected: usize,
     pub mode: InputMode,
     pub preview: Text<'static>,
+    pub rendered_previews: Vec<RenderedPreview>,
     pub error: Option<String>,
     pub should_quit: bool,
     pub should_open: bool,
@@ -73,6 +88,7 @@ impl App {
             selected: 0,
             mode: InputMode::Insert,
             preview: Text::default(),
+            rendered_previews: Vec::new(),
             error: None,
             should_quit: false,
             should_open: false,
@@ -215,7 +231,11 @@ mod tests {
             searchable_text: display_text.clone(),
             display_text,
             preview_title: format!("{session} / {window}"),
-            pane_id: Some("%1".into()),
+            preview_panes: vec![PreviewPane {
+                title: format!("{session} / {window}"),
+                pane_id: "%1".into(),
+                active: true,
+            }],
             preview_message: None,
             current: false,
             harpoon_slot: None,

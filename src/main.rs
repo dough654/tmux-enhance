@@ -36,6 +36,8 @@ enum Command {
     Doctor,
     #[command(hide = true)]
     ToastClear { token: String },
+    #[command(hide = true)]
+    SessionTouch { session_name: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -44,6 +46,8 @@ enum PickerSource {
     Windows,
     /// Search marked Harpoon sessions.
     Harpoon,
+    /// Search tmux sessions with multi-window previews.
+    Sessions,
 }
 
 #[derive(Debug, Subcommand)]
@@ -68,6 +72,9 @@ fn main() -> Result<()> {
         Command::Picker {
             source: PickerSource::Harpoon,
         } => harpoon::picker(),
+        Command::Picker {
+            source: PickerSource::Sessions,
+        } => picker::sessions::run(),
         Command::Harpoon {
             command: HarpoonCommand::Add,
         } => harpoon::add(),
@@ -85,6 +92,9 @@ fn main() -> Result<()> {
         } => harpoon::list(),
         Command::Doctor => doctor(),
         Command::ToastClear { token } => notify::clear(&token),
+        Command::SessionTouch { session_name } => {
+            store::Store::open()?.touch_session(&session_name)
+        }
     }
 }
 

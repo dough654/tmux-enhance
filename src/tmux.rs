@@ -16,6 +16,10 @@ pub struct WindowTarget {
     pub current_path: String,
     pub current: bool,
     pub session_active_window: bool,
+    pub session_activity: i64,
+    pub session_windows: u32,
+    pub attached_clients: u32,
+    pub window_activity: i64,
 }
 
 impl WindowTarget {
@@ -52,6 +56,10 @@ impl Tmux {
             "#{pane_current_path}",
             "#{&&:#{session_attached},#{window_active}}",
             "#{window_active}",
+            "#{session_activity}",
+            "#{session_windows}",
+            "#{session_attached}",
+            "#{window_activity}",
         ]
         .join(&separator);
 
@@ -179,7 +187,7 @@ impl Tmux {
 
 fn parse_window(line: &str) -> Result<WindowTarget> {
     let fields: Vec<&str> = line.split(FIELD_SEPARATOR).collect();
-    if fields.len() != 10 {
+    if fields.len() != 14 {
         bail!("unexpected tmux window record with {} fields", fields.len());
     }
     Ok(WindowTarget {
@@ -193,6 +201,12 @@ fn parse_window(line: &str) -> Result<WindowTarget> {
         current_path: fields[7].to_string(),
         current: fields[8] == "1",
         session_active_window: fields[9] == "1",
+        session_activity: fields[10].parse().context("parsing session activity")?,
+        session_windows: fields[11].parse().context("parsing session window count")?,
+        attached_clients: fields[12]
+            .parse()
+            .context("parsing attached client count")?,
+        window_activity: fields[13].parse().context("parsing window activity")?,
     })
 }
 
@@ -214,6 +228,10 @@ mod tests {
             "/home/example/project one",
             "1",
             "1",
+            "1700000000",
+            "4",
+            "2",
+            "1700000001",
         ]
         .join(&separator);
 
@@ -222,5 +240,7 @@ mod tests {
         assert_eq!(parsed.window_name, "agent window");
         assert!(parsed.current);
         assert!(parsed.session_active_window);
+        assert_eq!(parsed.session_windows, 4);
+        assert_eq!(parsed.attached_clients, 2);
     }
 }

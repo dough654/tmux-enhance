@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::{Result, bail};
 
 use crate::{
-    app::{PickerAction, PickerEntry},
+    app::{PickerAction, PickerEntry, PreviewPane},
     notify,
     picker::windows,
     store::Store,
@@ -104,7 +104,11 @@ pub fn picker() -> Result<()> {
                         "{} · {} / {}",
                         mark.slot, mark.session_name, window.window_name
                     ),
-                    pane_id: Some(window.pane_id.clone()),
+                    preview_panes: vec![PreviewPane {
+                        title: format!("{} / {}", mark.session_name, window.window_name),
+                        pane_id: window.pane_id.clone(),
+                        active: true,
+                    }],
                     preview_message: None,
                     current: mark.session_name == current_session,
                     harpoon_slot: Some(mark.slot),
@@ -122,7 +126,7 @@ pub fn picker() -> Result<()> {
                     searchable_text: display_text.clone(),
                     display_text,
                     preview_title: format!("{} · {} · unavailable", mark.slot, mark.session_name),
-                    pane_id: None,
+                    preview_panes: Vec::new(),
                     preview_message: Some(message.clone()),
                     current: false,
                     harpoon_slot: Some(mark.slot),

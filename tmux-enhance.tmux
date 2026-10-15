@@ -18,6 +18,12 @@ tmux bind-key Space display-popup -E \
   -d "#{pane_current_path}" \
   "\"$enhance_bin\" picker windows"
 
+tmux bind-key S display-popup -E \
+  -w "$picker_width" \
+  -h "$picker_height" \
+  -d "#{pane_current_path}" \
+  "\"$enhance_bin\" picker sessions"
+
 tmux bind-key h switch-client -T enhance-harpoon
 tmux bind-key -T enhance-harpoon a run-shell "\"$enhance_bin\" harpoon add"
 tmux bind-key -T enhance-harpoon r run-shell "\"$enhance_bin\" harpoon remove-current"
@@ -30,3 +36,6 @@ tmux bind-key -T enhance-harpoon o display-popup -E \
 for slot in {1..9}; do
   tmux bind-key -T enhance-harpoon "$slot" run-shell "\"$enhance_bin\" harpoon jump $slot"
 done
+
+tmux set-hook -g 'client-session-changed[987]' \
+  "run-shell \"\\\"$enhance_bin\\\" session-touch #{q:hook_session_name}\""

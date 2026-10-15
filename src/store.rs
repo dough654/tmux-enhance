@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     env, fs,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -41,6 +42,10 @@ impl Store {
                 session_name TEXT NOT NULL UNIQUE,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS session_history (
+                session_name TEXT PRIMARY KEY,
+                last_accessed INTEGER NOT NULL
             );",
         )?;
         Ok(Self { connection })
@@ -127,6 +132,25 @@ impl Store {
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
     }
+
+    pub fn touch_session(&self, session_name: &str) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO session_history (session_name, last_accessed)
+             VALUES (?1, ?2)
+             ON CONFLICT(session_name) DO UPDATE SET last_accessed = excluded.last_accessed",
+            params![session_name, timestamp_millis()],
+        )?;
+        Ok(())
+    }
+
+    pub fn session_history(&self) -> Result<HashMap<String, i64>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT session_name, last_accessed FROM session_history")?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect::<rusqlite::Result<HashMap<_, _>>>()
+            .map_err(Into::into)
+    }
 }
 
 fn database_path() -> Result<PathBuf> {
@@ -145,6 +169,13 @@ fn timestamp() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+fn timestamp_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
 }
 
 #[cfg(test)]
@@ -191,5 +222,12 @@ mod tests {
         assert_eq!(store.remove_session("one").unwrap(), Some(1));
         assert_eq!(store.remove_session("one").unwrap(), None);
         assert!(store.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn records_session_access() {
+        let store = store();
+        store.touch_session("one").unwrap();
+        assert!(store.session_history().unwrap().contains_key("one"));
     }
 }

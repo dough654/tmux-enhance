@@ -20,6 +20,8 @@ run-shell '/home/doug/dev/tmux-plugins/tmux-enhance/tmux-enhance.tmux'
 
 Reload tmux. Press `prefix + Space` to open the window picker.
 
+Press `prefix + S` to open the session picker. It prioritizes the last session you visited, keeps the current session out of the way, and previews up to four windows using an adaptive one-, two-, or four-cell layout. The native `prefix + s` switcher remains available.
+
 ### Picker keys
 
 - The picker opens in insert mode for immediate searching.

@@ -25,7 +25,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{App, InputMode, PickerAction, PickerEntry},
+    app::{App, InputMode, PickerAction, PickerEntry, PreviewPane, RenderedPreview},
     store::Store,
     theme::Theme,
     tmux::Tmux,
@@ -44,7 +44,11 @@ pub fn run() -> Result<()> {
                 searchable_text: display_text.clone(),
                 display_text,
                 preview_title: format!("{} / {}", window.session_name, window.window_name),
-                pane_id: Some(window.pane_id),
+                preview_panes: vec![PreviewPane {
+                    title: format!("{} / {}", window.session_name, window.window_name),
+                    pane_id: window.pane_id,
+                    active: true,
+                }],
                 preview_message: None,
                 current: window.current,
                 harpoon_slot: None,
@@ -184,28 +188,39 @@ fn handle_key(app: &mut App, key: KeyEvent, allow_delete: bool) {
 fn refresh_preview(tmux: &Tmux, app: &mut App, height: u16) {
     let Some(item) = app.selected_item() else {
         app.preview = Default::default();
+        app.rendered_previews.clear();
         app.error = None;
         app.preview_dirty = false;
         return;
     };
-    let pane_id = item.pane_id.clone();
+    let preview_panes = item.preview_panes.clone();
     let preview_message = item.preview_message.clone();
-    let Some(pane_id) = pane_id else {
+    if preview_panes.is_empty() {
         app.preview = preview_message.unwrap_or_default().into();
+        app.rendered_previews.clear();
         app.error = None;
         app.preview_dirty = false;
         return;
-    };
-    match tmux.capture_preview(&pane_id, height) {
-        Ok(preview) => match preview.into_text() {
-            Ok(preview) => {
-                app.preview = preview;
-                app.error = None;
-            }
-            Err(error) => app.error = Some(format!("could not parse pane colors: {error}")),
-        },
-        Err(error) => app.error = Some(error.to_string()),
     }
+
+    let rows = if preview_panes.len() > 2 { 2 } else { 1 };
+    let pane_height = (height / rows).saturating_sub(2).max(4);
+    app.rendered_previews = preview_panes
+        .into_iter()
+        .map(|pane| {
+            let text = tmux
+                .capture_preview(&pane.pane_id, pane_height)
+                .and_then(|preview| preview.into_text().map_err(Into::into))
+                .unwrap_or_else(|error| format!("Preview unavailable: {error}").into());
+            RenderedPreview {
+                title: pane.title,
+                text,
+                active: pane.active,
+            }
+        })
+        .collect();
+    app.preview = Default::default();
+    app.error = None;
     app.preview_dirty = false;
 }
 
@@ -344,6 +359,11 @@ fn highlighted_spans(text: &str, matched: &[usize], theme: Theme) -> Vec<Span<'s
 }
 
 fn render_preview(frame: &mut Frame, app: &App, area: Rect, theme: Theme) {
+    if !app.rendered_previews.is_empty() {
+        render_preview_grid(frame, &app.rendered_previews, area, theme);
+        return;
+    }
+
     let title = app
         .selected_item()
         .map(|item| format!(" {} ", item.preview_title))
@@ -363,6 +383,53 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect, theme: Theme) {
             .title(title),
     );
     frame.render_widget(preview, area);
+}
+
+fn render_preview_grid(frame: &mut Frame, previews: &[RenderedPreview], area: Rect, theme: Theme) {
+    let areas = preview_areas(area, previews.len());
+    for (preview, area) in previews.iter().zip(areas) {
+        let border = if preview.active {
+            theme.accent
+        } else {
+            theme.border
+        };
+        let widget = Paragraph::new(preview.text.clone())
+            .style(theme.base())
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(border))
+                    .title_style(theme.text().add_modifier(Modifier::BOLD))
+                    .style(theme.base())
+                    .title(format!(" {} ", preview.title)),
+            );
+        frame.render_widget(widget, area);
+    }
+}
+
+fn preview_areas(area: Rect, count: usize) -> Vec<Rect> {
+    match count {
+        0 => Vec::new(),
+        1 => vec![area],
+        2 => Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area)
+            .to_vec(),
+        _ => {
+            let rows = Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(area);
+            let mut areas = Vec::with_capacity(4);
+            for row in rows.iter() {
+                areas.extend(
+                    Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                        .split(*row)
+                        .iter()
+                        .copied(),
+                );
+            }
+            areas.truncate(count.min(4));
+            areas
+        }
+    }
 }
 
 fn render_footer(frame: &mut Frame, app: &App, area: Rect, theme: Theme) {
