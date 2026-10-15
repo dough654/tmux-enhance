@@ -113,6 +113,8 @@ fn session_entries(
             let mut entries = vec![PickerEntry {
                 searchable_text: format!("{display_text}  {child_search_text}"),
                 display_text,
+                secondary_text: None,
+                badge: None,
                 preview_title: session_name.clone(),
                 preview_panes,
                 preview_message: None,
@@ -150,6 +152,8 @@ fn session_entries(
                         PickerEntry {
                             searchable_text: display_text.clone(),
                             display_text,
+                            secondary_text: None,
+                            badge: None,
                             preview_title: format!("{} / {}", session_name, window.window_name),
                             preview_panes: vec![PreviewPane {
                                 title: format!("{}:{}", window.window_index, window.window_name),
@@ -195,6 +199,7 @@ mod tests {
             window_index: index,
             window_name: format!("window-{index}"),
             pane_id: format!("%{index}"),
+            pane_title: format!("window-{index}"),
             command: "shell".into(),
             current_path: "/tmp".into(),
             current: false,

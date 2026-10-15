@@ -24,13 +24,35 @@ Press `prefix + s` to open the session picker. It prioritizes the last session y
 
 Searching automatically reveals matching child windows beneath their parent sessions without changing the saved expanded state. The original flat window picker remains available as `tmux-enhance picker windows`, but is no longer bound by default. `prefix + Space` is restored to tmux's native `next-layout` action.
 
+Press `prefix + a` to search OpenCode agent panes. The bundled OpenCode companion reports the exact session attached to each tmux pane and distinguishes `processing`, `permission`, `input`, and `ready`; title/path matching remains available as a fallback for unintegrated panes. Statuses refresh once per second while the picker is open. Agents use the same MRU behavior as sessions: the pane you came from is prioritized and the currently focused agent is moved to the bottom.
+
+### OpenCode integration
+
+Loading `tmux-enhance.tmux` automatically registers the bundled terminal plugin in OpenCode's global `cli.json`. Registration is idempotent and preserves unrelated settings and plugins. Existing OpenCode clients reload valid settings automatically; newly opened clients start reporting immediately.
+
+Check or repair the integration with:
+
+```sh
+tmux-enhance doctor
+tmux-enhance opencode status --plugin-dir /path/to/tmux-enhance/opencode
+tmux-enhance opencode install \
+  --plugin-dir /path/to/tmux-enhance/opencode \
+  --binary /path/to/tmux-enhance
+```
+
+Remove only the tmux-enhance registration with:
+
+```sh
+tmux-enhance opencode remove --plugin-dir /path/to/tmux-enhance/opencode
+```
+
 ### Picker keys
 
 - The picker opens in insert mode for immediate searching.
 - Insert mode: type to search, `Esc` for normal mode, arrows to select, `Enter` to open.
 - Normal mode: `j`/`k` to select, `h`/`l` to move through the query, `i` to insert before the cursor, `a` after it, `A` or `/` at the end, `gg`/`G` for first/last, `Enter` to open, `q` to close.
 
-The picker inherits its background, foreground, and accent from tmux's resolved window, status, and pane border styles. When a theme exposes only its brighter status-bar surface, tmux-enhance derives a darker canvas for dark themes. Borders use the active-pane accent when the normal border would disappear into the background. The selected-row color is a subtle blend of the canvas and accent rather than tmux's often-bright copy-mode highlight. This works with theme plugins without requiring theme-specific integration. Individual colors can be overridden before loading tmux-enhance:
+The picker inherits its background, foreground, and accent from tmux's resolved window, status, and pane border styles. Agent status colors are selected from the resolved status-bar palette by semantic hue: green for ready, orange for permission, light blue/cyan for input, and the active-pane accent for processing. Static colors are used only when the active theme does not expose a suitable color. When a theme exposes only its brighter status-bar surface, tmux-enhance derives a darker canvas for dark themes. Borders use the active-pane accent when the normal border would disappear into the background. The selected-row color is a subtle blend of the canvas and accent rather than tmux's often-bright copy-mode highlight. This works with theme plugins without requiring theme-specific integration. Individual colors can be overridden before loading tmux-enhance:
 
 ```tmux
 set -g @enhance-color-background '#282c34'
@@ -41,6 +63,10 @@ set -g @enhance-color-selection-background '#3e4451'
 set -g @enhance-color-selection-foreground '#ffffff'
 set -g @enhance-color-normal-mode-background '#e5c07b'
 set -g @enhance-color-normal-mode-foreground '#282c34'
+set -g @enhance-color-agent-processing '#6272a4'
+set -g @enhance-color-agent-permission '#e5a84b'
+set -g @enhance-color-agent-input '#2878b8'
+set -g @enhance-color-agent-ready '#15803d'
 ```
 
 ## Harpoon sessions
@@ -71,5 +97,4 @@ set -g @enhance-toast-duration 4
 
 | Binding | Action |
 | --- | --- |
-| `prefix + a` | Search active agents |
 | `prefix + Enter` | Jump to the latest agent waiting for input |

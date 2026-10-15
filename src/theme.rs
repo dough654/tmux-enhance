@@ -12,6 +12,10 @@ pub struct Theme {
     pub selection_foreground: Color,
     pub normal_mode_background: Color,
     pub normal_mode_foreground: Color,
+    pub agent_processing_background: Color,
+    pub agent_permission_background: Color,
+    pub agent_input_background: Color,
+    pub agent_ready_background: Color,
 }
 
 impl Theme {
@@ -21,6 +25,7 @@ impl Theme {
         let mode = tmux.option("mode-style").unwrap_or_default();
         let border = tmux.option("pane-border-style").unwrap_or_default();
         let active_border = tmux.option("pane-active-border-style").unwrap_or_default();
+        let palette = status_palette(tmux);
 
         let foreground = style_color(&status, "fg").unwrap_or(Color::White);
         let status_background = style_color(&status, "bg").unwrap_or(Color::Reset);
@@ -41,8 +46,18 @@ impl Theme {
             },
             selection_background: blend(background, accent, 28).unwrap_or(Color::DarkGray),
             selection_foreground: foreground,
-            normal_mode_background: style_color(&mode, "bg").unwrap_or(Color::Yellow),
-            normal_mode_foreground: style_color(&mode, "fg").unwrap_or(Color::Black),
+            normal_mode_background: semantic_color(&palette, 30.0)
+                .or_else(|| style_color(&mode, "bg"))
+                .unwrap_or(Color::Yellow),
+            normal_mode_foreground: foreground,
+            agent_processing_background: accent,
+            agent_permission_background: semantic_color(&palette, 30.0)
+                .or_else(|| style_color(&mode, "bg"))
+                .unwrap_or(Color::Rgb(229, 168, 75)),
+            agent_input_background: semantic_color(&palette, 190.0)
+                .unwrap_or(Color::Rgb(40, 120, 184)),
+            agent_ready_background: semantic_color(&palette, 125.0)
+                .unwrap_or(Color::Rgb(21, 128, 61)),
         };
 
         theme.background = override_color(tmux, "@enhance-color-background", theme.background);
@@ -68,6 +83,23 @@ impl Theme {
             tmux,
             "@enhance-color-normal-mode-foreground",
             theme.normal_mode_foreground,
+        );
+        theme.agent_processing_background =
+            override_color(tmux, "@enhance-color-agent-processing", theme.accent);
+        theme.agent_permission_background = override_color(
+            tmux,
+            "@enhance-color-agent-permission",
+            theme.agent_permission_background,
+        );
+        theme.agent_input_background = override_color(
+            tmux,
+            "@enhance-color-agent-input",
+            theme.agent_input_background,
+        );
+        theme.agent_ready_background = override_color(
+            tmux,
+            "@enhance-color-agent-ready",
+            theme.agent_ready_background,
         );
         theme
     }
@@ -129,6 +161,83 @@ fn blend(background: Color, foreground: Color, foreground_percent: u16) -> Optio
         ((u16::from(bg) * background_percent + u16::from(fg) * foreground_percent) / 100) as u8,
         ((u16::from(bb) * background_percent + u16::from(fb) * foreground_percent) / 100) as u8,
     ))
+}
+
+fn status_palette(tmux: &Tmux) -> Vec<Color> {
+    [
+        "status-left",
+        "status-right",
+        "status-style",
+        "window-status-format",
+        "window-status-current-format",
+        "message-style",
+        "mode-style",
+        "pane-active-border-style",
+    ]
+    .into_iter()
+    .filter_map(|option| tmux.option(option).ok())
+    .flat_map(|value| colors_in_format(&value))
+    .fold(Vec::new(), |mut colors, color| {
+        if !colors.contains(&color) {
+            colors.push(color);
+        }
+        colors
+    })
+}
+
+fn colors_in_format(value: &str) -> Vec<Color> {
+    ["fg=", "bg="]
+        .into_iter()
+        .flat_map(|marker| {
+            value.match_indices(marker).filter_map(move |(index, _)| {
+                let value = &value[index + marker.len()..];
+                let end = value
+                    .find(|character: char| {
+                        character == ',' || character == ']' || character.is_whitespace()
+                    })
+                    .unwrap_or(value.len());
+                parse_color(&value[..end])
+            })
+        })
+        .collect()
+}
+
+fn semantic_color(palette: &[Color], target_hue: f32) -> Option<Color> {
+    palette
+        .iter()
+        .copied()
+        .min_by(|left, right| {
+            semantic_color_score(*left, target_hue)
+                .partial_cmp(&semantic_color_score(*right, target_hue))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .filter(|color| semantic_color_score(*color, target_hue) < 50.0)
+}
+
+fn semantic_color_score(color: Color, target_hue: f32) -> f32 {
+    let Some((red, green, blue)) = rgb(color) else {
+        return f32::MAX;
+    };
+    let red = f32::from(red) / 255.0;
+    let green = f32::from(green) / 255.0;
+    let blue = f32::from(blue) / 255.0;
+    let maximum = red.max(green).max(blue);
+    let minimum = red.min(green).min(blue);
+    let delta = maximum - minimum;
+    if maximum == 0.0 || delta / maximum < 0.25 {
+        return f32::MAX;
+    }
+    let hue = if delta == 0.0 {
+        0.0
+    } else if maximum == red {
+        60.0 * ((green - blue) / delta).rem_euclid(6.0)
+    } else if maximum == green {
+        60.0 * ((blue - red) / delta + 2.0)
+    } else {
+        60.0 * ((red - green) / delta + 4.0)
+    };
+    let distance = (hue - target_hue).abs();
+    distance.min(360.0 - distance)
 }
 
 fn canvas_from_status(background: Color, foreground: Color) -> Color {
@@ -232,6 +341,24 @@ mod tests {
         assert_eq!(
             style_color("noattr,bg=#282c34,fg=colour231", "fg"),
             Some(Color::Indexed(231))
+        );
+    }
+
+    #[test]
+    fn extracts_and_classifies_semantic_status_colors() {
+        let palette =
+            colors_in_format("#[bg=#50fa7b] ready #[bg=#ffb86c] permission #[bg=#8be9fd] input");
+        assert_eq!(
+            semantic_color(&palette, 125.0),
+            Some(Color::Rgb(80, 250, 123))
+        );
+        assert_eq!(
+            semantic_color(&palette, 30.0),
+            Some(Color::Rgb(255, 184, 108))
+        );
+        assert_eq!(
+            semantic_color(&palette, 190.0),
+            Some(Color::Rgb(139, 233, 253))
         );
     }
 

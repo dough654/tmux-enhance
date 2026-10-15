@@ -12,6 +12,13 @@ enhance_bin="$(tmux show-option -gqv @enhance-bin)"
 picker_width="$(tmux show-option -gqv @enhance-picker-width)"
 picker_height="$(tmux show-option -gqv @enhance-picker-height)"
 
+if [[ -x "$enhance_bin" && -d "$CURRENT_DIR/opencode" ]]; then
+  "$enhance_bin" opencode install \
+    --plugin-dir "$CURRENT_DIR/opencode" \
+    --binary "$enhance_bin" \
+    --quiet >/dev/null 2>&1 &
+fi
+
 tmux bind-key Space next-layout
 
 tmux bind-key s display-popup -E \
@@ -19,6 +26,12 @@ tmux bind-key s display-popup -E \
   -h "$picker_height" \
   -d "#{pane_current_path}" \
   "\"$enhance_bin\" picker sessions"
+
+tmux bind-key a display-popup -E \
+  -w "$picker_width" \
+  -h "$picker_height" \
+  -d "#{pane_current_path}" \
+  "\"$enhance_bin\" picker agents"
 
 tmux bind-key h switch-client -T enhance-harpoon
 tmux bind-key -T enhance-harpoon a run-shell "\"$enhance_bin\" harpoon add"

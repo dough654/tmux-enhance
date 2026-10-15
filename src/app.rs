@@ -41,9 +41,26 @@ pub enum PickerHierarchy {
     Child { parent_id: String },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerBadgeTone {
+    Processing,
+    Permission,
+    Input,
+    Ready,
+    Muted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PickerBadge {
+    pub label: String,
+    pub tone: PickerBadgeTone,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PickerEntry {
     pub display_text: String,
+    pub secondary_text: Option<String>,
+    pub badge: Option<PickerBadge>,
     pub searchable_text: String,
     pub preview_title: String,
     pub preview_panes: Vec<PreviewPane>,
@@ -202,6 +219,31 @@ impl App {
         Some(removed)
     }
 
+    pub fn replace_items(&mut self, items: Vec<PickerEntry>) {
+        if self.items == items {
+            return;
+        }
+
+        let selected_pane = self
+            .selected_item()
+            .and_then(|item| item.preview_panes.first())
+            .map(|pane| pane.pane_id.clone());
+        let previous_selection = self.selected;
+        self.items = items;
+        self.refilter();
+        self.selected = selected_pane
+            .and_then(|pane_id| {
+                self.filtered.iter().position(|filtered| {
+                    self.items[filtered.index]
+                        .preview_panes
+                        .first()
+                        .is_some_and(|pane| pane.pane_id == pane_id)
+                })
+            })
+            .unwrap_or_else(|| previous_selection.min(self.filtered.len().saturating_sub(1)));
+        self.preview_dirty = true;
+    }
+
     pub fn toggle_selected_expansion(&mut self) {
         let Some(item_index) = self.filtered.get(self.selected).map(|item| item.index) else {
             return;
@@ -306,7 +348,16 @@ impl App {
         let matches: Vec<Option<(i64, Vec<usize>)>> = self
             .items
             .iter()
-            .map(|item| matcher.fuzzy_indices(&item.searchable_text, &self.query))
+            .map(|item| {
+                let visible_text = item.visible_text();
+                matcher
+                    .fuzzy_indices(&visible_text, &self.query)
+                    .or_else(|| {
+                        matcher
+                            .fuzzy_match(&item.searchable_text, &self.query)
+                            .map(|score| (score, Vec::new()))
+                    })
+            })
             .collect();
 
         let mut groups: Vec<(i64, usize, Vec<FilteredItem>)> = Vec::new();
@@ -379,6 +430,15 @@ impl App {
     }
 }
 
+impl PickerEntry {
+    pub fn visible_text(&self) -> String {
+        match &self.secondary_text {
+            Some(secondary) => format!("{}\n{secondary}", self.display_text),
+            None => self.display_text.clone(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -388,6 +448,8 @@ mod tests {
         PickerEntry {
             searchable_text: display_text.clone(),
             display_text,
+            secondary_text: None,
+            badge: None,
             preview_title: format!("{session} / {window}"),
             preview_panes: vec![PreviewPane {
                 title: format!("{session} / {window}"),
@@ -429,6 +491,19 @@ mod tests {
         assert_eq!(app.selected, 0);
         app.move_previous();
         assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn live_refresh_preserves_the_selected_pane() {
+        let first = target("one", "agent", "opencode");
+        let mut second = target("two", "agent", "opencode");
+        second.preview_panes[0].pane_id = "%2".into();
+        let mut app = App::new(vec![first.clone(), second.clone()]);
+        app.move_next();
+
+        app.replace_items(vec![second, first]);
+
+        assert_eq!(app.selected_item().unwrap().preview_panes[0].pane_id, "%2");
     }
 
     #[test]
@@ -560,5 +635,22 @@ mod tests {
             app.backspace_query();
         }
         assert_eq!(app.filtered.len(), 1);
+    }
+
+    #[test]
+    fn highlights_visible_text_before_search_metadata() {
+        let mut visible = target("swing-app", "agent", "opencode");
+        visible.searchable_text.push_str(" swing-app agent");
+        let mut app = App::new(vec![visible]);
+        for character in "agent".chars() {
+            app.insert_query(character);
+        }
+        assert!(!app.filtered[0].matched.is_empty());
+        assert!(
+            app.filtered[0]
+                .matched
+                .iter()
+                .all(|index| *index < app.items[0].display_text.chars().count())
+        );
     }
 }

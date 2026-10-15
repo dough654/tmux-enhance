@@ -20,6 +20,15 @@ pub struct AddResult {
     pub added: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentReport {
+    pub pane_id: String,
+    pub session_id: String,
+    pub status: String,
+    pub title: String,
+    pub reported_at: i64,
+}
+
 pub struct Store {
     connection: Connection,
 }
@@ -46,6 +55,17 @@ impl Store {
             CREATE TABLE IF NOT EXISTS session_history (
                 session_name TEXT PRIMARY KEY,
                 last_accessed INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS pane_history (
+                pane_id TEXT PRIMARY KEY,
+                last_accessed INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS agent_reports (
+                pane_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                title TEXT NOT NULL,
+                reported_at INTEGER NOT NULL
             );",
         )?;
         Ok(Self { connection })
@@ -151,6 +171,63 @@ impl Store {
         rows.collect::<rusqlite::Result<HashMap<_, _>>>()
             .map_err(Into::into)
     }
+
+    pub fn touch_pane(&self, pane_id: &str) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO pane_history (pane_id, last_accessed)
+             VALUES (?1, ?2)
+             ON CONFLICT(pane_id) DO UPDATE SET last_accessed = excluded.last_accessed",
+            params![pane_id, timestamp_millis()],
+        )?;
+        Ok(())
+    }
+
+    pub fn pane_history(&self) -> Result<HashMap<String, i64>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT pane_id, last_accessed FROM pane_history")?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect::<rusqlite::Result<HashMap<_, _>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn report_agent(
+        &self,
+        pane_id: &str,
+        session_id: &str,
+        status: &str,
+        title: &str,
+    ) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO agent_reports (pane_id, session_id, status, title, reported_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(pane_id) DO UPDATE SET
+                session_id = excluded.session_id,
+                status = excluded.status,
+                title = excluded.title,
+                reported_at = excluded.reported_at",
+            params![pane_id, session_id, status, title, timestamp_millis()],
+        )?;
+        Ok(())
+    }
+
+    pub fn agent_reports(&self) -> Result<HashMap<String, AgentReport>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT pane_id, session_id, status, title, reported_at FROM agent_reports")?;
+        let rows = statement.query_map([], |row| {
+            let report = AgentReport {
+                pane_id: row.get(0)?,
+                session_id: row.get(1)?,
+                status: row.get(2)?,
+                title: row.get(3)?,
+                reported_at: row.get(4)?,
+            };
+            Ok((report.pane_id.clone(), report))
+        })?;
+        rows.collect::<rusqlite::Result<HashMap<_, _>>>()
+            .map_err(Into::into)
+    }
 }
 
 fn database_path() -> Result<PathBuf> {
@@ -229,5 +306,25 @@ mod tests {
         let store = store();
         store.touch_session("one").unwrap();
         assert!(store.session_history().unwrap().contains_key("one"));
+    }
+
+    #[test]
+    fn records_pane_access() {
+        let store = store();
+        store.touch_pane("%12").unwrap();
+        assert!(store.pane_history().unwrap().contains_key("%12"));
+    }
+
+    #[test]
+    fn records_authoritative_agent_reports() {
+        let store = store();
+        store
+            .report_agent("%12", "ses_123", "permission", "Review")
+            .unwrap();
+        let reports = store.agent_reports().unwrap();
+        let report = reports.get("%12").unwrap();
+        assert_eq!(report.session_id, "ses_123");
+        assert_eq!(report.status, "permission");
+        assert_eq!(report.title, "Review");
     }
 }

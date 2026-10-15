@@ -1,0 +1,385 @@
+use std::{
+    collections::HashMap,
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+use anyhow::{Context, Result, bail};
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use crate::{store::AgentReport, tmux::WindowTarget};
+
+const REPORT_TTL: Duration = Duration::from_secs(45);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentStatus {
+    Idle,
+    Waiting,
+    Ready,
+    Input,
+    Permission,
+    Processing,
+}
+
+impl AgentStatus {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Waiting => "waiting",
+            Self::Ready => "ready",
+            Self::Input => "input",
+            Self::Permission => "permission",
+            Self::Processing => "processing",
+        }
+    }
+
+    pub fn from_report(value: &str) -> Option<Self> {
+        match value {
+            "ready" => Some(Self::Ready),
+            "input" => Some(Self::Input),
+            "permission" => Some(Self::Permission),
+            "processing" => Some(Self::Processing),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentPane {
+    pub window: WindowTarget,
+    pub session_id: Option<String>,
+    pub title: String,
+    pub agent: Option<String>,
+    pub status: AgentStatus,
+    pub updated: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiResponse<T> {
+    data: T,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct OpenCodeSession {
+    id: String,
+    title: String,
+    #[serde(default)]
+    agent: Option<String>,
+    time: SessionTime,
+    location: SessionLocation,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SessionTime {
+    updated: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SessionLocation {
+    directory: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ActiveStatus {
+    #[serde(rename = "type")]
+    kind: String,
+}
+
+pub fn discover(
+    windows: Vec<WindowTarget>,
+    reports: &HashMap<String, AgentReport>,
+) -> Result<Vec<AgentPane>> {
+    let mut sessions: Vec<OpenCodeSession> = api("/api/session")?;
+    let active: HashMap<String, ActiveStatus> = api("/api/session/active")?;
+    sessions.sort_by(|left, right| right.time.updated.cmp(&left.time.updated));
+
+    Ok(windows
+        .into_iter()
+        .filter(|window| window.command == "opencode" || window.pane_title.starts_with("OC | "))
+        .map(|window| {
+            let pane_title = window
+                .pane_title
+                .strip_prefix("OC | ")
+                .unwrap_or(&window.pane_title)
+                .trim();
+            let report = reports
+                .get(&window.pane_id)
+                .filter(|report| report_is_fresh(report));
+            let session = report
+                .and_then(|report| {
+                    sessions
+                        .iter()
+                        .find(|session| session.id == report.session_id)
+                })
+                .or_else(|| best_session(pane_title, &window.current_path, &sessions));
+            let session_id = session.map(|session| session.id.clone());
+            let status = report
+                .and_then(|report| AgentStatus::from_report(&report.status))
+                .unwrap_or_else(|| match session_id.as_ref().and_then(|id| active.get(id)) {
+                    Some(status) if status.kind != "idle" => AgentStatus::Processing,
+                    _ if session.is_some() => AgentStatus::Waiting,
+                    _ => AgentStatus::Idle,
+                });
+            AgentPane {
+                title: session
+                    .map(|session| session.title.clone())
+                    .filter(|title| !title.is_empty())
+                    .or_else(|| report.map(|report| report.title.clone()))
+                    .unwrap_or_else(|| pane_title.to_string()),
+                agent: session.and_then(|session| session.agent.clone()),
+                updated: session.map(|session| session.time.updated),
+                window,
+                session_id,
+                status,
+            }
+        })
+        .collect())
+}
+
+fn report_is_fresh(report: &AgentReport) -> bool {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    now.saturating_sub(report.reported_at) <= REPORT_TTL.as_millis() as i64
+}
+
+fn best_session<'a>(
+    title: &str,
+    pane_path: &str,
+    sessions: &'a [OpenCodeSession],
+) -> Option<&'a OpenCodeSession> {
+    sessions
+        .iter()
+        .filter(|session| session.title == title)
+        .max_by_key(|session| {
+            let session_path = Path::new(&session.location.directory);
+            let pane_path = Path::new(pane_path);
+            (
+                u8::from(session_path == pane_path)
+                    + u8::from(
+                        session_path.starts_with(pane_path) || pane_path.starts_with(session_path),
+                    ),
+                session.time.updated,
+            )
+        })
+}
+
+fn api<T>(path: &str) -> Result<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let output = Command::new("opencode")
+        .args(["api", "get", path])
+        .output()
+        .context("running opencode api")?;
+    if !output.status.success() {
+        bail!(
+            "opencode api: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let response: ApiResponse<T> = serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("parsing OpenCode response for {path}"))?;
+    Ok(response.data)
+}
+
+pub fn install_integration(plugin_dir: &Path, binary: &Path) -> Result<bool> {
+    let config_path = cli_config_path()?;
+    install_integration_at(&config_path, plugin_dir, binary)
+}
+
+pub fn remove_integration(plugin_dir: &Path) -> Result<bool> {
+    let config_path = cli_config_path()?;
+    remove_integration_at(&config_path, plugin_dir)
+}
+
+pub fn integration_installed(plugin_dir: &Path) -> Result<bool> {
+    let config_path = cli_config_path()?;
+    if !config_path.exists() {
+        return Ok(false);
+    }
+    let plugin_dir = plugin_dir
+        .canonicalize()
+        .unwrap_or_else(|_| plugin_dir.to_path_buf());
+    let config = read_cli_config(&config_path)?;
+    Ok(config
+        .get("plugins")
+        .and_then(Value::as_array)
+        .is_some_and(|plugins| {
+            plugins
+                .iter()
+                .any(|entry| package_path(entry) == Some(plugin_dir.as_path()))
+        }))
+}
+
+fn cli_config_path() -> Result<PathBuf> {
+    let config_home = env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| Path::new(&home).join(".config")))
+        .context("neither XDG_CONFIG_HOME nor HOME is set")?;
+    Ok(config_home.join("opencode/cli.json"))
+}
+
+fn install_integration_at(config_path: &Path, plugin_dir: &Path, binary: &Path) -> Result<bool> {
+    let plugin_dir = plugin_dir
+        .canonicalize()
+        .with_context(|| format!("finding OpenCode plugin at {}", plugin_dir.display()))?;
+    let binary = binary
+        .canonicalize()
+        .with_context(|| format!("finding tmux-enhance binary at {}", binary.display()))?;
+    let mut config = if config_path.exists() {
+        read_cli_config(config_path)?
+    } else {
+        json!({ "$schema": "https://opencode.ai/v2/cli.json" })
+    };
+    let object = config
+        .as_object_mut()
+        .context("OpenCode cli.json must contain a JSON object")?;
+    let plugins = object
+        .entry("plugins")
+        .or_insert_with(|| Value::Array(Vec::new()))
+        .as_array_mut()
+        .context("OpenCode cli.json 'plugins' must be an array")?;
+
+    let plugin_string = plugin_dir.to_string_lossy().into_owned();
+    let binary_string = binary.to_string_lossy().into_owned();
+    if let Some(entry) = plugins
+        .iter_mut()
+        .find(|entry| package_path(entry) == Some(plugin_dir.as_path()))
+    {
+        let desired = plugin_entry(&plugin_string, &binary_string, entry);
+        if *entry == desired {
+            return Ok(false);
+        }
+        *entry = desired;
+    } else {
+        plugins.push(plugin_entry(&plugin_string, &binary_string, &Value::Null));
+    }
+    write_cli_config(config_path, &config)?;
+    Ok(true)
+}
+
+fn remove_integration_at(config_path: &Path, plugin_dir: &Path) -> Result<bool> {
+    if !config_path.exists() {
+        return Ok(false);
+    }
+    let plugin_dir = plugin_dir
+        .canonicalize()
+        .unwrap_or_else(|_| plugin_dir.to_path_buf());
+    let mut config = read_cli_config(config_path)?;
+    let Some(plugins) = config.get_mut("plugins").and_then(Value::as_array_mut) else {
+        return Ok(false);
+    };
+    let previous_len = plugins.len();
+    plugins.retain(|entry| package_path(entry) != Some(plugin_dir.as_path()));
+    if plugins.len() == previous_len {
+        return Ok(false);
+    }
+    write_cli_config(config_path, &config)?;
+    Ok(true)
+}
+
+fn plugin_entry(package: &str, binary: &str, previous: &Value) -> Value {
+    let mut entry = previous.as_object().cloned().unwrap_or_default();
+    entry.insert("package".into(), Value::String(package.into()));
+    let mut options = entry
+        .remove("options")
+        .and_then(|options| options.as_object().cloned())
+        .unwrap_or_default();
+    options.insert("binary".into(), Value::String(binary.into()));
+    entry.insert("options".into(), Value::Object(options));
+    Value::Object(entry)
+}
+
+fn package_path(entry: &Value) -> Option<&Path> {
+    entry
+        .as_str()
+        .or_else(|| entry.get("package").and_then(Value::as_str))
+        .map(Path::new)
+}
+
+fn read_cli_config(path: &Path) -> Result<Value> {
+    let contents =
+        fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    serde_json::from_str(&contents).with_context(|| format!("parsing {}", path.display()))
+}
+
+fn write_cli_config(path: &Path, config: &Value) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    let mut contents = serde_json::to_string_pretty(config)?;
+    contents.push('\n');
+    let temporary = path.with_extension("json.tmux-enhance.tmp");
+    fs::write(&temporary, contents).with_context(|| format!("writing {}", temporary.display()))?;
+    fs::rename(&temporary, path).with_context(|| format!("updating {}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn session(id: &str, title: &str, directory: &str, updated: i64) -> OpenCodeSession {
+        OpenCodeSession {
+            id: id.into(),
+            title: title.into(),
+            agent: Some("build".into()),
+            time: SessionTime { updated },
+            location: SessionLocation {
+                directory: directory.into(),
+            },
+        }
+    }
+
+    #[test]
+    fn matches_titles_and_prefers_the_pane_path() {
+        let sessions = vec![
+            session("newer", "Review", "/other", 20),
+            session("project", "Review", "/project", 10),
+        ];
+        let matched = best_session("Review", "/project/src", &sessions).unwrap();
+        assert_eq!(matched.id, "project");
+    }
+
+    #[test]
+    fn installs_without_replacing_other_cli_settings() {
+        let root = temporary_directory();
+        let config = root.join("cli.json");
+        let plugin = root.join("plugin");
+        let binary = root.join("tmux-enhance");
+        fs::create_dir(&plugin).unwrap();
+        fs::write(&binary, "binary").unwrap();
+        fs::write(
+            &config,
+            r#"{"theme":{"name":"test"},"plugins":["existing"]}"#,
+        )
+        .unwrap();
+
+        assert!(install_integration_at(&config, &plugin, &binary).unwrap());
+        assert!(!install_integration_at(&config, &plugin, &binary).unwrap());
+        let installed = read_cli_config(&config).unwrap();
+        assert_eq!(installed["theme"]["name"], "test");
+        assert_eq!(installed["plugins"][0], "existing");
+        assert_eq!(installed["plugins"].as_array().unwrap().len(), 2);
+        assert!(remove_integration_at(&config, &plugin).unwrap());
+        assert_eq!(read_cli_config(&config).unwrap()["plugins"][0], "existing");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn temporary_directory() -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = env::temp_dir().join(format!(
+            "tmux-enhance-opencode-test-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+}

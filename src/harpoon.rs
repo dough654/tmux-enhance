@@ -100,6 +100,8 @@ pub fn picker() -> Result<()> {
                 PickerEntry {
                     searchable_text: display_text.clone(),
                     display_text,
+                    secondary_text: None,
+                    badge: None,
                     preview_title: format!(
                         "{} · {} / {}",
                         mark.slot, mark.session_name, window.window_name
@@ -127,6 +129,8 @@ pub fn picker() -> Result<()> {
                 PickerEntry {
                     searchable_text: display_text.clone(),
                     display_text,
+                    secondary_text: None,
+                    badge: None,
                     preview_title: format!("{} · {} · unavailable", mark.slot, mark.session_name),
                     preview_panes: Vec::new(),
                     preview_message: Some(message.clone()),

@@ -12,6 +12,7 @@ pub struct WindowTarget {
     pub window_index: u32,
     pub window_name: String,
     pub pane_id: String,
+    pub pane_title: String,
     pub command: String,
     pub current_path: String,
     pub current: bool,
@@ -52,6 +53,7 @@ impl Tmux {
             "#{window_index}",
             "#{window_name}",
             "#{pane_id}",
+            "#{pane_title}",
             "#{pane_current_command}",
             "#{pane_current_path}",
             "#{&&:#{session_attached},#{window_active}}",
@@ -84,6 +86,10 @@ impl Tmux {
 
     pub fn current_session_name(&self) -> Result<String> {
         self.output(["display-message", "-p", "#{session_name}"])
+    }
+
+    pub fn current_pane_id(&self) -> Result<String> {
+        self.output(["display-message", "-p", "#{pane_id}"])
     }
 
     pub fn switch_to_session(&self, session_name: &str) -> Result<()> {
@@ -187,7 +193,7 @@ impl Tmux {
 
 fn parse_window(line: &str) -> Result<WindowTarget> {
     let fields: Vec<&str> = line.split(FIELD_SEPARATOR).collect();
-    if fields.len() != 14 {
+    if fields.len() != 15 {
         bail!("unexpected tmux window record with {} fields", fields.len());
     }
     Ok(WindowTarget {
@@ -197,16 +203,17 @@ fn parse_window(line: &str) -> Result<WindowTarget> {
         window_index: fields[3].parse().context("parsing tmux window index")?,
         window_name: fields[4].to_string(),
         pane_id: fields[5].to_string(),
-        command: fields[6].to_string(),
-        current_path: fields[7].to_string(),
-        current: fields[8] == "1",
-        session_active_window: fields[9] == "1",
-        session_activity: fields[10].parse().context("parsing session activity")?,
-        session_windows: fields[11].parse().context("parsing session window count")?,
-        attached_clients: fields[12]
+        pane_title: fields[6].to_string(),
+        command: fields[7].to_string(),
+        current_path: fields[8].to_string(),
+        current: fields[9] == "1",
+        session_active_window: fields[10] == "1",
+        session_activity: fields[11].parse().context("parsing session activity")?,
+        session_windows: fields[12].parse().context("parsing session window count")?,
+        attached_clients: fields[13]
             .parse()
             .context("parsing attached client count")?,
-        window_activity: fields[13].parse().context("parsing window activity")?,
+        window_activity: fields[14].parse().context("parsing window activity")?,
     })
 }
 
@@ -224,6 +231,7 @@ mod tests {
             "2",
             "agent window",
             "%8",
+            "OC | Review",
             "opencode",
             "/home/example/project one",
             "1",

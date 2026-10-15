@@ -19,14 +19,15 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Modifier, Style},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     app::{
-        App, InputMode, PickerAction, PickerEntry, PickerHierarchy, PreviewPane, RenderedPreview,
+        App, InputMode, PickerAction, PickerBadgeTone, PickerEntry, PickerHierarchy, PreviewPane,
+        RenderedPreview,
     },
     store::Store,
     theme::Theme,
@@ -34,6 +35,11 @@ use crate::{
 };
 
 const PREVIEW_REFRESH: Duration = Duration::from_millis(500);
+const ENTRY_REFRESH: Duration = Duration::from_secs(1);
+const UI_VERTICAL_CHROME: u16 = 6;
+const UI_HORIZONTAL_PADDING: u16 = 1;
+
+type EntryRefresher<'a> = dyn FnMut() -> Result<Vec<PickerEntry>> + 'a;
 
 pub fn run() -> Result<()> {
     let tmux = Tmux::from_env();
@@ -45,6 +51,8 @@ pub fn run() -> Result<()> {
             PickerEntry {
                 searchable_text: display_text.clone(),
                 display_text,
+                secondary_text: None,
+                badge: None,
                 preview_title: format!("{} / {}", window.session_name, window.window_name),
                 preview_panes: vec![PreviewPane {
                     title: format!("{} / {}", window.session_name, window.window_name),
@@ -67,6 +75,24 @@ pub fn run() -> Result<()> {
 }
 
 pub fn run_entries(source: &str, list_title: &str, entries: Vec<PickerEntry>) -> Result<()> {
+    run_entries_inner(source, list_title, entries, None)
+}
+
+pub fn run_entries_live(
+    source: &str,
+    list_title: &str,
+    entries: Vec<PickerEntry>,
+    refresh: &mut EntryRefresher<'_>,
+) -> Result<()> {
+    run_entries_inner(source, list_title, entries, Some(refresh))
+}
+
+fn run_entries_inner(
+    source: &str,
+    list_title: &str,
+    entries: Vec<PickerEntry>,
+    refresh: Option<&mut EntryRefresher<'_>>,
+) -> Result<()> {
     let tmux = Tmux::from_env();
     let theme = Theme::from_tmux(&tmux);
     let mut app = App::new(entries);
@@ -74,7 +100,15 @@ pub fn run_entries(source: &str, list_title: &str, entries: Vec<PickerEntry>) ->
 
     let mut terminal = setup_terminal()?;
     let _cleanup = TerminalCleanup;
-    let result = run_loop(&mut terminal, &tmux, &mut app, theme, source, list_title);
+    let result = run_loop(
+        &mut terminal,
+        &tmux,
+        &mut app,
+        theme,
+        source,
+        list_title,
+        refresh,
+    );
     terminal.show_cursor()?;
     result
 }
@@ -86,8 +120,10 @@ fn run_loop(
     theme: Theme,
     source: &str,
     list_title: &str,
+    mut refresh: Option<&mut EntryRefresher<'_>>,
 ) -> Result<()> {
     let mut last_preview = Instant::now();
+    let mut last_entry_refresh = Instant::now();
     let mut cursor_mode = None;
 
     loop {
@@ -104,7 +140,7 @@ fn run_loop(
             if let Some(slot) = app.selected_item().and_then(|item| item.harpoon_slot) {
                 Store::open()?.remove(slot)?;
                 app.remove_selected_item();
-                let preview_height = terminal.size()?.height.saturating_sub(5);
+                let preview_height = terminal.size()?.height.saturating_sub(UI_VERTICAL_CHROME);
                 refresh_preview(tmux, app, preview_height);
             }
         }
@@ -136,9 +172,18 @@ fn run_loop(
         }
 
         if app.preview_dirty || last_preview.elapsed() >= PREVIEW_REFRESH {
-            let preview_height = terminal.size()?.height.saturating_sub(5);
+            let preview_height = terminal.size()?.height.saturating_sub(UI_VERTICAL_CHROME);
             refresh_preview(tmux, app, preview_height);
             last_preview = Instant::now();
+        }
+
+        if last_entry_refresh.elapsed() >= ENTRY_REFRESH {
+            if let Some(refresh) = refresh.as_mut()
+                && let Ok(items) = refresh()
+            {
+                app.replace_items(items);
+            }
+            last_entry_refresh = Instant::now();
         }
     }
 }
@@ -234,16 +279,24 @@ fn refresh_preview(tmux: &Tmux, app: &mut App, height: u16) {
 
 fn render(frame: &mut Frame, app: &mut App, theme: Theme, source: &str, list_title: &str) {
     frame.render_widget(Block::default().style(theme.base()), frame.area());
+    let frame_area = frame.area();
+    let content_area = Rect::new(
+        frame_area.x.saturating_add(UI_HORIZONTAL_PADDING),
+        frame_area.y,
+        frame_area
+            .width
+            .saturating_sub(UI_HORIZONTAL_PADDING.saturating_mul(2)),
+        frame_area.height,
+    );
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Min(4),
             Constraint::Length(1),
+            Constraint::Min(4),
+            Constraint::Length(3),
+            Constraint::Length(2),
         ])
-        .split(frame.area());
-
-    render_search(frame, app, outer[0], theme, source);
+        .split(content_area);
 
     let columns = Layout::default()
         .direction(Direction::Horizontal)
@@ -251,10 +304,11 @@ fn render(frame: &mut Frame, app: &mut App, theme: Theme, source: &str, list_tit
         .split(outer[1]);
     render_items(frame, app, columns[0], theme, list_title);
     render_preview(frame, app, columns[1], theme);
-    render_footer(frame, app, outer[2], theme, source);
+    render_search(frame, app, outer[2], theme);
+    render_footer(frame, app, outer[3], theme, source);
 }
 
-fn render_search(frame: &mut Frame, app: &App, area: Rect, theme: Theme, source: &str) {
+fn render_search(frame: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let mode = match app.mode {
         InputMode::Insert => Span::styled(
             " INSERT ",
@@ -280,9 +334,7 @@ fn render_search(frame: &mut Frame, app: &App, area: Rect, theme: Theme, source:
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.border))
-            .title_style(theme.text().add_modifier(Modifier::BOLD))
-            .style(theme.base())
-            .title(format!(" tmux-enhance / {source} ")),
+            .style(theme.base()),
     );
     frame.render_widget(query, area);
 
@@ -292,6 +344,7 @@ fn render_search(frame: &mut Frame, app: &App, area: Rect, theme: Theme, source:
 }
 
 fn render_items(frame: &mut Frame, app: &mut App, area: Rect, theme: Theme, title: &str) {
+    let item_width = usize::from(area.width.saturating_sub(4));
     let items: Vec<ListItem> = app
         .filtered
         .iter()
@@ -307,14 +360,52 @@ fn render_items(frame: &mut Frame, app: &mut App, area: Rect, theme: Theme, titl
                 format!("{marker} "),
                 Style::default().fg(theme.accent),
             )];
+            let mut continuation_indent = 2;
             if let Some(PickerHierarchy::Parent { expanded, .. }) = &item.hierarchy {
                 spans.push(Span::styled(
                     if *expanded { "▾ " } else { "▸ " },
                     Style::default().fg(theme.accent),
                 ));
+                continuation_indent += 2;
             }
-            spans.extend(highlighted_spans(&item.display_text, matched, theme));
-            let list_item = ListItem::new(Line::from(spans));
+            let badge_width = item
+                .badge
+                .as_ref()
+                .map_or(0, |badge| badge.label.as_str().width() + 2);
+            let display_width = item_width
+                .saturating_sub(continuation_indent)
+                .saturating_sub(badge_width)
+                .saturating_sub(usize::from(item.badge.is_some()));
+            let display_text = truncate_to_width(&item.display_text, display_width);
+            spans.extend(highlighted_spans(
+                &display_text,
+                matched,
+                0,
+                theme.text(),
+                theme,
+            ));
+            if let Some(badge) = &item.badge {
+                let used_width = continuation_indent + display_text.as_str().width() + badge_width;
+                spans.push(Span::raw(" ".repeat(item_width.saturating_sub(used_width))));
+                spans.push(Span::styled(
+                    format!(" {} ", badge.label),
+                    badge_style(badge.tone, theme),
+                ));
+            }
+            let mut lines = vec![Line::from(spans)];
+            if let Some(secondary) = &item.secondary_text {
+                let offset = item.display_text.chars().count() + 1;
+                let mut secondary_spans = vec![Span::raw(" ".repeat(continuation_indent))];
+                secondary_spans.extend(highlighted_spans(
+                    secondary,
+                    matched,
+                    offset,
+                    theme.text().add_modifier(Modifier::DIM),
+                    theme,
+                ));
+                lines.push(Line::from(secondary_spans));
+            }
+            let list_item = ListItem::new(Text::from(lines));
             if row == app.selected {
                 list_item.style(
                     Style::default()
@@ -343,18 +434,38 @@ fn render_items(frame: &mut Frame, app: &mut App, area: Rect, theme: Theme, titl
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-fn highlighted_spans(text: &str, matched: &[usize], theme: Theme) -> Vec<Span<'static>> {
+fn truncate_to_width(text: &str, maximum_width: usize) -> String {
+    let mut width = 0;
+    text.chars()
+        .take_while(|character| {
+            let character_width = character.width().unwrap_or_default();
+            if width + character_width > maximum_width {
+                return false;
+            }
+            width += character_width;
+            true
+        })
+        .collect()
+}
+
+fn highlighted_spans(
+    text: &str,
+    matched: &[usize],
+    offset: usize,
+    base_style: Style,
+    theme: Theme,
+) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     let mut segment = String::new();
     let mut segment_is_match = false;
 
     for (index, character) in text.chars().enumerate() {
-        let is_match = matched.binary_search(&index).is_ok();
+        let is_match = matched.binary_search(&(index + offset)).is_ok();
         if !segment.is_empty() && is_match != segment_is_match {
             let style = if segment_is_match {
                 theme.match_style()
             } else {
-                theme.text()
+                base_style
             };
             spans.push(Span::styled(std::mem::take(&mut segment), style));
         }
@@ -365,11 +476,36 @@ fn highlighted_spans(text: &str, matched: &[usize], theme: Theme) -> Vec<Span<'s
         let style = if segment_is_match {
             theme.match_style()
         } else {
-            theme.text()
+            base_style
         };
         spans.push(Span::styled(segment, style));
     }
     spans
+}
+
+fn badge_style(tone: PickerBadgeTone, theme: Theme) -> Style {
+    match tone {
+        PickerBadgeTone::Processing => Style::default()
+            .fg(theme.foreground)
+            .bg(theme.agent_processing_background)
+            .add_modifier(Modifier::BOLD),
+        PickerBadgeTone::Permission => Style::default()
+            .fg(theme.normal_mode_foreground)
+            .bg(theme.agent_permission_background)
+            .add_modifier(Modifier::BOLD),
+        PickerBadgeTone::Input => Style::default()
+            .fg(theme.foreground)
+            .bg(theme.agent_input_background)
+            .add_modifier(Modifier::BOLD),
+        PickerBadgeTone::Ready => Style::default()
+            .fg(theme.foreground)
+            .bg(theme.agent_ready_background)
+            .add_modifier(Modifier::BOLD),
+        PickerBadgeTone::Muted => Style::default()
+            .fg(theme.foreground)
+            .bg(theme.selection_background)
+            .add_modifier(Modifier::BOLD),
+    }
 }
 
 fn render_preview(frame: &mut Frame, app: &App, area: Rect, theme: Theme) {
@@ -446,8 +582,8 @@ fn preview_areas(area: Rect, count: usize) -> Vec<Rect> {
     }
 }
 
-fn render_footer(frame: &mut Frame, app: &App, area: Rect, theme: Theme, source: &str) {
-    let actions = match (app.mode, source) {
+fn legend_actions(mode: InputMode, source: &str) -> Vec<(&'static str, &'static str)> {
+    match (mode, source) {
         (InputMode::Insert, "sessions") => vec![
             ("Esc", "Normal mode"),
             ("↑/↓", "Select"),
@@ -476,8 +612,14 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect, theme: Theme, source:
             ("Enter", "Open"),
             ("q", "Close"),
         ],
-    };
-    frame.render_widget(Paragraph::new(legend(actions, theme)), area);
+    }
+}
+
+fn render_footer(frame: &mut Frame, app: &App, area: Rect, theme: Theme, source: &str) {
+    frame.render_widget(
+        Paragraph::new(legend(legend_actions(app.mode, source), theme)),
+        area,
+    );
 }
 
 fn legend(actions: Vec<(&'static str, &'static str)>, theme: Theme) -> Line<'static> {
