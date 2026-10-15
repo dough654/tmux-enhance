@@ -20,7 +20,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, List, ListDirection, ListItem, ListState, Paragraph},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -200,8 +200,8 @@ fn handle_key(app: &mut App, key: KeyEvent, allow_delete: bool) {
             KeyCode::Backspace => app.backspace_query(),
             KeyCode::Tab => app.toggle_selected_expansion(),
             KeyCode::BackTab => app.toggle_all_expansions(),
-            KeyCode::Down => app.move_next(),
-            KeyCode::Up => app.move_previous(),
+            KeyCode::Down => app.move_previous(),
+            KeyCode::Up => app.move_next(),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.should_quit = true
             }
@@ -216,15 +216,15 @@ fn handle_key(app: &mut App, key: KeyEvent, allow_delete: bool) {
             app.pending_g = false;
             app.pending_d = false;
             match key.code {
-                KeyCode::Char('g') if completing_gg => app.move_first(),
+                KeyCode::Char('g') if completing_gg => app.move_last(),
                 KeyCode::Char('g') => app.pending_g = true,
                 KeyCode::Char('d') if completing_dd => app.should_delete = true,
                 KeyCode::Char('d') if allow_delete => app.pending_d = true,
-                KeyCode::Char('j') | KeyCode::Down => app.move_next(),
-                KeyCode::Char('k') | KeyCode::Up => app.move_previous(),
+                KeyCode::Char('j') | KeyCode::Down => app.move_previous(),
+                KeyCode::Char('k') | KeyCode::Up => app.move_next(),
                 KeyCode::Char('h') | KeyCode::Left => app.move_cursor_left(),
                 KeyCode::Char('l') | KeyCode::Right => app.move_cursor_right(),
-                KeyCode::Char('G') => app.move_last(),
+                KeyCode::Char('G') => app.move_first(),
                 KeyCode::Tab => app.toggle_selected_expansion(),
                 KeyCode::BackTab => app.toggle_all_expansions(),
                 KeyCode::Char('i') => app.insert_before_cursor(),
@@ -421,6 +421,7 @@ fn render_items(frame: &mut Frame, app: &mut App, area: Rect, theme: Theme, titl
     let mut state =
         ListState::default().with_selected((!app.filtered.is_empty()).then_some(app.selected));
     let list = List::new(items)
+        .direction(ListDirection::BottomToTop)
         .block(
             Block::default()
                 .borders(Borders::ALL)

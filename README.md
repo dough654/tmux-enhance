@@ -24,7 +24,7 @@ Press `prefix + s` to open the session picker. It prioritizes the last session y
 
 Searching automatically reveals matching child windows beneath their parent sessions without changing the saved expanded state. The original flat window picker remains available as `tmux-enhance picker windows`, but is no longer bound by default. `prefix + Space` is restored to tmux's native `next-layout` action.
 
-Press `prefix + a` to search OpenCode agent panes. The bundled OpenCode companion reports the exact session attached to each tmux pane and distinguishes `processing`, `permission`, `input`, and `ready`; title/path matching remains available as a fallback for unintegrated panes. Statuses refresh once per second while the picker is open. Agents use the same MRU behavior as sessions: the pane you came from is prioritized and the currently focused agent is moved to the bottom.
+Press `prefix + a` to search OpenCode and Claude Code agent panes together. Their integrations report the exact session attached to each tmux pane and distinguish `processing`, `permission`, `input`, and `ready`; OpenCode title/path matching remains available as a fallback for unintegrated panes. Statuses refresh once per second while the picker is open. Agents use the same MRU behavior as sessions: the pane you came from is prioritized and the currently focused agent is moved to the bottom.
 
 ### OpenCode integration
 
@@ -44,6 +44,18 @@ Remove only the tmux-enhance registration with:
 
 ```sh
 tmux-enhance opencode remove --plugin-dir /path/to/tmux-enhance/opencode
+```
+
+### Claude Code integration
+
+Loading `tmux-enhance.tmux` also registers tmux-enhance lifecycle hooks in Claude Code's global `~/.claude/settings.json`. Installation is idempotent and preserves unrelated settings and hooks. New or resumed Claude Code sessions report prompt, permission, elicitation, processing, and completion transitions automatically.
+
+Check, repair, or remove only the tmux-enhance hooks with:
+
+```sh
+tmux-enhance claude-code status
+tmux-enhance claude-code install --binary /path/to/tmux-enhance
+tmux-enhance claude-code remove
 ```
 
 ### Picker keys

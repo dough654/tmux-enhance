@@ -23,6 +23,7 @@ pub struct AddResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentReport {
     pub pane_id: String,
+    pub provider: String,
     pub session_id: String,
     pub status: String,
     pub title: String,
@@ -62,12 +63,27 @@ impl Store {
             );
             CREATE TABLE IF NOT EXISTS agent_reports (
                 pane_id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL DEFAULT 'opencode',
                 session_id TEXT NOT NULL,
                 status TEXT NOT NULL,
                 title TEXT NOT NULL,
                 reported_at INTEGER NOT NULL
             );",
         )?;
+        let has_provider = {
+            let mut statement = connection.prepare("PRAGMA table_info(agent_reports)")?;
+            let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+            columns
+                .collect::<rusqlite::Result<Vec<_>>>()?
+                .iter()
+                .any(|column| column == "provider")
+        };
+        if !has_provider {
+            connection.execute(
+                "ALTER TABLE agent_reports ADD COLUMN provider TEXT NOT NULL DEFAULT 'opencode'",
+                [],
+            )?;
+        }
         Ok(Self { connection })
     }
 
@@ -194,34 +210,47 @@ impl Store {
     pub fn report_agent(
         &self,
         pane_id: &str,
+        provider: &str,
         session_id: &str,
         status: &str,
         title: &str,
     ) -> Result<()> {
         self.connection.execute(
-            "INSERT INTO agent_reports (pane_id, session_id, status, title, reported_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO agent_reports (pane_id, provider, session_id, status, title, reported_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(pane_id) DO UPDATE SET
+                provider = excluded.provider,
                 session_id = excluded.session_id,
                 status = excluded.status,
-                title = excluded.title,
+                title = CASE
+                    WHEN excluded.title = '' THEN agent_reports.title
+                    ELSE excluded.title
+                END,
                 reported_at = excluded.reported_at",
-            params![pane_id, session_id, status, title, timestamp_millis()],
+            params![
+                pane_id,
+                provider,
+                session_id,
+                status,
+                title,
+                timestamp_millis()
+            ],
         )?;
         Ok(())
     }
 
     pub fn agent_reports(&self) -> Result<HashMap<String, AgentReport>> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT pane_id, session_id, status, title, reported_at FROM agent_reports")?;
+        let mut statement = self.connection.prepare(
+            "SELECT pane_id, provider, session_id, status, title, reported_at FROM agent_reports",
+        )?;
         let rows = statement.query_map([], |row| {
             let report = AgentReport {
                 pane_id: row.get(0)?,
-                session_id: row.get(1)?,
-                status: row.get(2)?,
-                title: row.get(3)?,
-                reported_at: row.get(4)?,
+                provider: row.get(1)?,
+                session_id: row.get(2)?,
+                status: row.get(3)?,
+                title: row.get(4)?,
+                reported_at: row.get(5)?,
             };
             Ok((report.pane_id.clone(), report))
         })?;
@@ -319,12 +348,29 @@ mod tests {
     fn records_authoritative_agent_reports() {
         let store = store();
         store
-            .report_agent("%12", "ses_123", "permission", "Review")
+            .report_agent("%12", "opencode", "ses_123", "permission", "Review")
             .unwrap();
         let reports = store.agent_reports().unwrap();
         let report = reports.get("%12").unwrap();
+        assert_eq!(report.provider, "opencode");
         assert_eq!(report.session_id, "ses_123");
         assert_eq!(report.status, "permission");
         assert_eq!(report.title, "Review");
+    }
+
+    #[test]
+    fn retains_an_agent_title_when_a_lifecycle_report_omits_it() {
+        let store = store();
+        store
+            .report_agent("%12", "claude", "session-123", "processing", "Fix tests")
+            .unwrap();
+        store
+            .report_agent("%12", "claude", "session-123", "ready", "")
+            .unwrap();
+
+        let reports = store.agent_reports().unwrap();
+        let report = reports.get("%12").unwrap();
+        assert_eq!(report.status, "ready");
+        assert_eq!(report.title, "Fix tests");
     }
 }

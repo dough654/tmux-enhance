@@ -12,9 +12,14 @@ enhance_bin="$(tmux show-option -gqv @enhance-bin)"
 picker_width="$(tmux show-option -gqv @enhance-picker-width)"
 picker_height="$(tmux show-option -gqv @enhance-picker-height)"
 
-if [[ -x "$enhance_bin" && -d "$CURRENT_DIR/opencode" ]]; then
-  "$enhance_bin" opencode install \
-    --plugin-dir "$CURRENT_DIR/opencode" \
+if [[ -x "$enhance_bin" ]]; then
+  if [[ -d "$CURRENT_DIR/opencode" ]]; then
+    "$enhance_bin" opencode install \
+      --plugin-dir "$CURRENT_DIR/opencode" \
+      --binary "$enhance_bin" \
+      --quiet >/dev/null 2>&1 &
+  fi
+  "$enhance_bin" claude-code install \
     --binary "$enhance_bin" \
     --quiet >/dev/null 2>&1 &
 fi

@@ -60,7 +60,7 @@ fn build_entries(
                 "{} › {}",
                 agent.window.session_name, agent.window.window_name
             );
-            let secondary_text = format!("{}{}", agent.title, agent_name);
+            let secondary_text = format!("{} · {}{}", agent.title, agent.provider, agent_name);
             let searchable_text = format!(
                 "{}\n{} {}",
                 display_text,

@@ -1,4 +1,5 @@
 mod app;
+mod claude;
 mod harpoon;
 mod notify;
 mod opencode;
@@ -36,7 +37,7 @@ enum Command {
     },
     /// Check runtime dependencies and tmux connectivity.
     Doctor,
-    /// Print discovered OpenCode agent panes and their status.
+    /// Print discovered agent panes and their status.
     Agents,
     /// Manage the bundled OpenCode TUI integration.
     #[command(name = "opencode")]
@@ -44,6 +45,14 @@ enum Command {
         #[command(subcommand)]
         command: OpenCodeCommand,
     },
+    /// Manage the Claude Code hook integration.
+    #[command(name = "claude-code")]
+    ClaudeCode {
+        #[command(subcommand)]
+        command: ClaudeCodeCommand,
+    },
+    #[command(hide = true)]
+    ClaudeHook,
     #[command(hide = true)]
     OpenCodeReport {
         #[arg(long)]
@@ -69,7 +78,7 @@ enum PickerSource {
     Harpoon,
     /// Search tmux sessions with multi-window previews.
     Sessions,
-    /// Search OpenCode agent panes.
+    /// Search OpenCode and Claude Code agent panes.
     Agents,
 }
 
@@ -108,6 +117,21 @@ enum OpenCodeCommand {
         #[arg(long)]
         plugin_dir: PathBuf,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum ClaudeCodeCommand {
+    /// Register lifecycle hooks while preserving existing Claude Code settings.
+    Install {
+        #[arg(long)]
+        binary: PathBuf,
+        #[arg(long)]
+        quiet: bool,
+    },
+    /// Remove only the tmux-enhance lifecycle hooks.
+    Remove,
+    /// Check whether every tmux-enhance lifecycle hook is registered.
+    Status,
 }
 
 fn main() -> Result<()> {
@@ -194,8 +218,48 @@ fn main() -> Result<()> {
             if opencode::AgentStatus::from_report(&status).is_none() {
                 anyhow::bail!("unsupported OpenCode agent status: {status}");
             }
-            store::Store::open()?.report_agent(&pane_id, &session_id, &status, &title)
+            store::Store::open()?.report_agent(&pane_id, "opencode", &session_id, &status, &title)
         }
+        Command::ClaudeCode {
+            command: ClaudeCodeCommand::Install { binary, quiet },
+        } => {
+            let changed = claude::install_integration(&binary)?;
+            if !quiet {
+                println!(
+                    "Claude Code integration {}",
+                    if changed {
+                        "installed"
+                    } else {
+                        "already installed"
+                    }
+                );
+            }
+            Ok(())
+        }
+        Command::ClaudeCode {
+            command: ClaudeCodeCommand::Remove,
+        } => {
+            let changed = claude::remove_integration()?;
+            println!(
+                "Claude Code integration {}",
+                if changed { "removed" } else { "not installed" }
+            );
+            Ok(())
+        }
+        Command::ClaudeCode {
+            command: ClaudeCodeCommand::Status,
+        } => {
+            println!(
+                "{}",
+                if claude::integration_installed()? {
+                    "installed"
+                } else {
+                    "not installed"
+                }
+            );
+            Ok(())
+        }
+        Command::ClaudeHook => claude::handle_hook(),
         Command::ToastClear { token } => notify::clear(&token),
         Command::SessionTouch { session_name } => {
             store::Store::open()?.touch_session(&session_name)
@@ -208,8 +272,9 @@ fn list_agents() -> Result<()> {
     let reports = store::Store::open()?.agent_reports()?;
     for agent in opencode::discover(tmux.windows()?, &reports)? {
         println!(
-            "{}\t{}:{}\t{}\t{}",
+            "{}\t{}\t{}:{}\t{}\t{}",
             agent.status.label(),
+            agent.provider,
             agent.window.session_name,
             agent.window.window_name,
             agent.title,
@@ -227,10 +292,10 @@ fn doctor() -> Result<()> {
     println!("[OK] {version}");
     println!("[OK] discovered {} windows", windows.len());
     if reports.is_empty() {
-        println!("[INFO] no direct OpenCode pane reports received yet");
+        println!("[INFO] no direct agent pane reports received yet");
     } else {
         println!(
-            "[OK] received direct reports from {} OpenCode panes",
+            "[OK] received direct reports from {} agent panes",
             reports.len()
         );
     }

@@ -50,6 +50,7 @@ impl AgentStatus {
 #[derive(Debug, Clone)]
 pub struct AgentPane {
     pub window: WindowTarget,
+    pub provider: &'static str,
     pub session_id: Option<String>,
     pub title: String,
     pub agent: Option<String>,
@@ -92,14 +93,48 @@ pub fn discover(
     windows: Vec<WindowTarget>,
     reports: &HashMap<String, AgentReport>,
 ) -> Result<Vec<AgentPane>> {
-    let mut sessions: Vec<OpenCodeSession> = api("/api/session")?;
-    let active: HashMap<String, ActiveStatus> = api("/api/session/active")?;
+    let has_opencode = windows
+        .iter()
+        .any(|window| is_opencode_window(window, reports));
+    let mut sessions: Vec<OpenCodeSession> = if has_opencode {
+        api("/api/session")?
+    } else {
+        Vec::new()
+    };
+    let active: HashMap<String, ActiveStatus> = if has_opencode {
+        api("/api/session/active")?
+    } else {
+        HashMap::new()
+    };
     sessions.sort_by(|left, right| right.time.updated.cmp(&left.time.updated));
 
     Ok(windows
         .into_iter()
-        .filter(|window| window.command == "opencode" || window.pane_title.starts_with("OC | "))
-        .map(|window| {
+        .filter_map(|window| {
+            if is_claude_window(&window) {
+                let report = reports
+                    .get(&window.pane_id)
+                    .filter(|report| report.provider == "claude");
+                let title = report
+                    .map(|report| report.title.trim())
+                    .filter(|title| !title.is_empty())
+                    .unwrap_or(window.pane_title.trim())
+                    .to_string();
+                return Some(AgentPane {
+                    provider: "Claude Code",
+                    session_id: report.map(|report| report.session_id.clone()),
+                    status: report
+                        .and_then(|report| AgentStatus::from_report(&report.status))
+                        .unwrap_or(AgentStatus::Idle),
+                    agent: None,
+                    updated: report.map(|report| report.reported_at),
+                    title,
+                    window,
+                });
+            }
+            if !is_opencode_window(&window, reports) {
+                return None;
+            }
             let pane_title = window
                 .pane_title
                 .strip_prefix("OC | ")
@@ -107,7 +142,7 @@ pub fn discover(
                 .trim();
             let report = reports
                 .get(&window.pane_id)
-                .filter(|report| report_is_fresh(report));
+                .filter(|report| report.provider == "opencode" && report_is_fresh(report));
             let session = report
                 .and_then(|report| {
                     sessions
@@ -123,7 +158,8 @@ pub fn discover(
                     _ if session.is_some() => AgentStatus::Waiting,
                     _ => AgentStatus::Idle,
                 });
-            AgentPane {
+            Some(AgentPane {
+                provider: "OpenCode",
                 title: session
                     .map(|session| session.title.clone())
                     .filter(|title| !title.is_empty())
@@ -134,9 +170,23 @@ pub fn discover(
                 window,
                 session_id,
                 status,
-            }
+            })
         })
         .collect())
+}
+
+fn is_opencode_window(window: &WindowTarget, reports: &HashMap<String, AgentReport>) -> bool {
+    window.command == "opencode"
+        || window.pane_title.starts_with("OC | ")
+        || reports
+            .get(&window.pane_id)
+            .is_some_and(|report| report.provider == "opencode" && report_is_fresh(report))
+}
+
+fn is_claude_window(window: &WindowTarget) -> bool {
+    window.command == "claude"
+        || window.pane_title.starts_with("Claude")
+        || window.pane_title.starts_with("claude")
 }
 
 fn report_is_fresh(report: &AgentReport) -> bool {
