@@ -36,6 +36,12 @@ pub struct RenderedPreview {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PickerHierarchy {
+    Parent { id: String, expanded: bool },
+    Child { parent_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PickerEntry {
     pub display_text: String,
     pub searchable_text: String,
@@ -44,6 +50,8 @@ pub struct PickerEntry {
     pub preview_message: Option<String>,
     pub current: bool,
     pub harpoon_slot: Option<u8>,
+    pub hierarchy: Option<PickerHierarchy>,
+    pub visible: bool,
     pub action: PickerAction,
 }
 
@@ -74,8 +82,11 @@ pub struct App {
 
 impl App {
     pub fn new(items: Vec<PickerEntry>) -> Self {
-        let filtered = (0..items.len())
-            .map(|index| FilteredItem {
+        let filtered = items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.visible)
+            .map(|(index, _)| FilteredItem {
                 index,
                 matched: Vec::new(),
             })
@@ -191,30 +202,177 @@ impl App {
         Some(removed)
     }
 
-    fn refilter(&mut self) {
-        let matcher = SkimMatcherV2::default().smart_case();
-        let mut matches: Vec<(usize, i64, Vec<usize>)> = self
+    pub fn toggle_selected_expansion(&mut self) {
+        let Some(item_index) = self.filtered.get(self.selected).map(|item| item.index) else {
+            return;
+        };
+        let Some(PickerHierarchy::Parent { id, expanded }) = self
+            .items
+            .get_mut(item_index)
+            .and_then(|item| item.hierarchy.as_mut())
+        else {
+            return;
+        };
+        *expanded = !*expanded;
+        let expanded = *expanded;
+        let id = id.clone();
+
+        for item in &mut self.items {
+            if matches!(
+                &item.hierarchy,
+                Some(PickerHierarchy::Child { parent_id }) if parent_id == &id
+            ) {
+                item.visible = expanded;
+            }
+        }
+        self.refilter();
+        self.selected = self
+            .filtered
+            .iter()
+            .position(|item| item.index == item_index)
+            .unwrap_or_default();
+        self.preview_dirty = true;
+    }
+
+    pub fn toggle_all_expansions(&mut self) {
+        let expand = self.items.iter().any(|item| {
+            matches!(
+                &item.hierarchy,
+                Some(PickerHierarchy::Parent {
+                    expanded: false,
+                    ..
+                })
+            )
+        });
+        if !self
             .items
             .iter()
-            .enumerate()
-            .filter_map(|(index, item)| {
-                if self.query.is_empty() {
-                    Some((index, 0, Vec::new()))
-                } else {
-                    matcher
-                        .fuzzy_indices(&item.searchable_text, &self.query)
-                        .map(|(score, matched)| (index, score, matched))
-                }
-            })
-            .collect();
-
-        if !self.query.is_empty() {
-            matches.sort_by(|left, right| right.1.cmp(&left.1).then(left.0.cmp(&right.0)));
+            .any(|item| matches!(&item.hierarchy, Some(PickerHierarchy::Parent { .. })))
+        {
+            return;
         }
 
-        self.filtered = matches
+        let previous_selection = self.selected;
+        let selected_item = self.filtered.get(self.selected).map(|item| item.index);
+        let selected_parent = selected_item.and_then(|index| match &self.items[index].hierarchy {
+            Some(PickerHierarchy::Child { parent_id }) => Some(parent_id.clone()),
+            _ => None,
+        });
+        for item in &mut self.items {
+            match &mut item.hierarchy {
+                Some(PickerHierarchy::Parent { expanded, .. }) => *expanded = expand,
+                Some(PickerHierarchy::Child { .. }) => item.visible = expand,
+                None => {}
+            }
+        }
+        self.refilter();
+        if let Some(selected_item) = selected_item {
+            self.selected = self
+                .filtered
+                .iter()
+                .position(|item| item.index == selected_item)
+                .or_else(|| {
+                    let parent_id = selected_parent.as_ref()?;
+                    self.filtered.iter().position(|filtered| {
+                        matches!(
+                            &self.items[filtered.index].hierarchy,
+                            Some(PickerHierarchy::Parent { id, .. }) if id == parent_id
+                        )
+                    })
+                })
+                .unwrap_or_else(|| previous_selection.min(self.filtered.len().saturating_sub(1)));
+        }
+        self.preview_dirty = true;
+    }
+
+    fn refilter(&mut self) {
+        let matcher = SkimMatcherV2::default().smart_case();
+        if self.query.is_empty() {
+            self.filtered = self
+                .items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| item.visible)
+                .map(|(index, _)| FilteredItem {
+                    index,
+                    matched: Vec::new(),
+                })
+                .collect();
+            self.selected = 0;
+            self.preview_dirty = true;
+            return;
+        }
+
+        let matches: Vec<Option<(i64, Vec<usize>)>> = self
+            .items
+            .iter()
+            .map(|item| matcher.fuzzy_indices(&item.searchable_text, &self.query))
+            .collect();
+
+        let mut groups: Vec<(i64, usize, Vec<FilteredItem>)> = Vec::new();
+        let mut index = 0;
+        while index < self.items.len() {
+            match &self.items[index].hierarchy {
+                Some(PickerHierarchy::Parent { id, .. }) => {
+                    let group_id = id.clone();
+                    let parent_match = matches[index].clone();
+                    let mut child_matches = Vec::new();
+                    let mut next = index + 1;
+                    while next < self.items.len()
+                        && matches!(
+                            &self.items[next].hierarchy,
+                            Some(PickerHierarchy::Child { parent_id }) if parent_id == &group_id
+                        )
+                    {
+                        if let Some((score, matched)) = &matches[next] {
+                            child_matches.push((next, *score, matched.clone()));
+                        }
+                        next += 1;
+                    }
+
+                    if parent_match.is_some() || !child_matches.is_empty() {
+                        let parent_score = parent_match.as_ref().map_or(i64::MIN, |item| item.0);
+                        let child_score = child_matches
+                            .iter()
+                            .map(|(_, score, _)| *score)
+                            .max()
+                            .unwrap_or(i64::MIN);
+                        let mut entries = vec![FilteredItem {
+                            index,
+                            matched: parent_match.map_or_else(Vec::new, |item| item.1),
+                        }];
+                        entries.extend(
+                            child_matches
+                                .into_iter()
+                                .map(|(index, _, matched)| FilteredItem { index, matched }),
+                        );
+                        groups.push((parent_score.max(child_score), index, entries));
+                    }
+                    index = next;
+                }
+                Some(PickerHierarchy::Child { .. }) => {
+                    index += 1;
+                }
+                None => {
+                    if let Some((score, matched)) = &matches[index] {
+                        groups.push((
+                            *score,
+                            index,
+                            vec![FilteredItem {
+                                index,
+                                matched: matched.clone(),
+                            }],
+                        ));
+                    }
+                    index += 1;
+                }
+            }
+        }
+
+        groups.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+        self.filtered = groups
             .into_iter()
-            .map(|(index, _, matched)| FilteredItem { index, matched })
+            .flat_map(|(_, _, entries)| entries)
             .collect();
         self.selected = 0;
         self.preview_dirty = true;
@@ -239,6 +397,8 @@ mod tests {
             preview_message: None,
             current: false,
             harpoon_slot: None,
+            hierarchy: None,
+            visible: true,
             action: PickerAction::Window {
                 session_id: "$1".into(),
                 window_index: 1,
@@ -315,5 +475,90 @@ mod tests {
         assert_eq!(app.cursor_byte, 4);
         app.move_cursor_right();
         assert_eq!(app.cursor_byte, 4);
+    }
+
+    #[test]
+    fn toggles_hierarchical_children() {
+        let mut parent = target("project", "session", "");
+        parent.hierarchy = Some(PickerHierarchy::Parent {
+            id: "project".into(),
+            expanded: false,
+        });
+        let mut child = target("project", "editor", "nvim");
+        child.hierarchy = Some(PickerHierarchy::Child {
+            parent_id: "project".into(),
+        });
+        child.visible = false;
+        let mut app = App::new(vec![parent, child]);
+
+        assert_eq!(app.filtered.len(), 1);
+        app.toggle_selected_expansion();
+        assert_eq!(app.filtered.len(), 2);
+        app.toggle_selected_expansion();
+        assert_eq!(app.filtered.len(), 1);
+    }
+
+    #[test]
+    fn toggles_all_hierarchical_children() {
+        let mut first_parent = target("one", "session", "");
+        first_parent.hierarchy = Some(PickerHierarchy::Parent {
+            id: "one".into(),
+            expanded: false,
+        });
+        let mut first_child = target("one", "editor", "nvim");
+        first_child.hierarchy = Some(PickerHierarchy::Child {
+            parent_id: "one".into(),
+        });
+        first_child.visible = false;
+        let mut second_parent = target("two", "session", "");
+        second_parent.hierarchy = Some(PickerHierarchy::Parent {
+            id: "two".into(),
+            expanded: false,
+        });
+        let mut second_child = target("two", "agent", "opencode");
+        second_child.hierarchy = Some(PickerHierarchy::Child {
+            parent_id: "two".into(),
+        });
+        second_child.visible = false;
+        let mut app = App::new(vec![first_parent, first_child, second_parent, second_child]);
+
+        app.toggle_all_expansions();
+        assert_eq!(app.filtered.len(), 4);
+        app.toggle_all_expansions();
+        assert_eq!(app.filtered.len(), 2);
+    }
+
+    #[test]
+    fn reveals_matching_children_without_expanding_the_parent() {
+        let mut parent = target("project", "2 windows", "editor agent");
+        parent.hierarchy = Some(PickerHierarchy::Parent {
+            id: "project".into(),
+            expanded: false,
+        });
+        let mut editor = target("project", "editor", "nvim");
+        editor.hierarchy = Some(PickerHierarchy::Child {
+            parent_id: "project".into(),
+        });
+        editor.visible = false;
+        let mut agent = target("project", "agent", "opencode");
+        agent.hierarchy = Some(PickerHierarchy::Child {
+            parent_id: "project".into(),
+        });
+        agent.visible = false;
+        let mut app = App::new(vec![parent, editor, agent]);
+
+        app.insert_query('a');
+        app.insert_query('g');
+        app.insert_query('e');
+        app.insert_query('n');
+        app.insert_query('t');
+        assert_eq!(app.filtered.len(), 2);
+        assert_eq!(app.filtered[0].index, 0);
+        assert_eq!(app.filtered[1].index, 2);
+
+        while app.cursor_byte > 0 {
+            app.backspace_query();
+        }
+        assert_eq!(app.filtered.len(), 1);
     }
 }

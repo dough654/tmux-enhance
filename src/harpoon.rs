@@ -112,6 +112,8 @@ pub fn picker() -> Result<()> {
                     preview_message: None,
                     current: mark.session_name == current_session,
                     harpoon_slot: Some(mark.slot),
+                    hierarchy: None,
+                    visible: true,
                     action: PickerAction::Session {
                         session_name: mark.session_name,
                     },
@@ -130,6 +132,8 @@ pub fn picker() -> Result<()> {
                     preview_message: Some(message.clone()),
                     current: false,
                     harpoon_slot: Some(mark.slot),
+                    hierarchy: None,
+                    visible: true,
                     action: PickerAction::Unavailable { message },
                 }
             }

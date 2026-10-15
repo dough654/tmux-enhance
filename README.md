@@ -18,9 +18,11 @@ Then load the local checkout from `~/.tmux.conf`:
 run-shell '/home/doug/dev/tmux-plugins/tmux-enhance/tmux-enhance.tmux'
 ```
 
-Reload tmux. Press `prefix + Space` to open the window picker.
+Reload tmux. Press `prefix + s` to open the session and window picker.
 
-Press `prefix + S` to open the session picker. It prioritizes the last session you visited, keeps the current session out of the way, and previews up to four windows using an adaptive one-, two-, or four-cell layout. The native `prefix + s` switcher remains available.
+Press `prefix + s` to open the session picker. It prioritizes the last session you visited, keeps the current session out of the way, and previews up to four windows using an adaptive one-, two-, or four-cell layout. Press `Tab` on a session to expand or collapse its indented window list, or `Shift + Tab` to expand or collapse every session; `Enter` on a child jumps directly to that window.
+
+Searching automatically reveals matching child windows beneath their parent sessions without changing the saved expanded state. The original flat window picker remains available as `tmux-enhance picker windows`, but is no longer bound by default. `prefix + Space` is restored to tmux's native `next-layout` action.
 
 ### Picker keys
 
@@ -69,6 +71,5 @@ set -g @enhance-toast-duration 4
 
 | Binding | Action |
 | --- | --- |
-| `prefix + Space` | Search windows across all sessions |
 | `prefix + a` | Search active agents |
 | `prefix + Enter` | Jump to the latest agent waiting for input |

@@ -12,13 +12,9 @@ enhance_bin="$(tmux show-option -gqv @enhance-bin)"
 picker_width="$(tmux show-option -gqv @enhance-picker-width)"
 picker_height="$(tmux show-option -gqv @enhance-picker-height)"
 
-tmux bind-key Space display-popup -E \
-  -w "$picker_width" \
-  -h "$picker_height" \
-  -d "#{pane_current_path}" \
-  "\"$enhance_bin\" picker windows"
+tmux bind-key Space next-layout
 
-tmux bind-key S display-popup -E \
+tmux bind-key s display-popup -E \
   -w "$picker_width" \
   -h "$picker_height" \
   -d "#{pane_current_path}" \

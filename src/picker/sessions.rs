@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 use crate::{
-    app::{PickerAction, PickerEntry, PreviewPane},
+    app::{PickerAction, PickerEntry, PickerHierarchy, PreviewPane},
     store::Store,
     tmux::{Tmux, WindowTarget},
 };
@@ -50,8 +50,15 @@ fn session_entries(
 
     sessions
         .into_iter()
-        .map(|mut session_windows| {
-            session_windows.sort_by(|left, right| {
+        .flat_map(|mut session_windows| {
+            let session = &session_windows[0];
+            let session_id = session.session_id.clone();
+            let session_name = session.session_name.clone();
+            let window_count = session.session_windows;
+            let attached_clients = session.attached_clients;
+
+            let mut preview_windows = session_windows.clone();
+            preview_windows.sort_by(|left, right| {
                 right
                     .session_active_window
                     .cmp(&left.session_active_window)
@@ -59,30 +66,34 @@ fn session_entries(
                     .then_with(|| left.window_index.cmp(&right.window_index))
             });
 
-            let session = &session_windows[0];
-            let session_name = session.session_name.clone();
-            let window_count = session.session_windows;
-            let attached = if session.attached_clients > 0 {
-                format!("  {} attached", session.attached_clients)
+            let attached = if attached_clients > 0 {
+                format!("  {attached_clients} attached")
             } else {
                 String::new()
             };
-            let window_names = session_windows
+            let child_search_text = session_windows
                 .iter()
-                .map(|window| window.window_name.as_str())
+                .map(|window| {
+                    format!(
+                        "{} {} {} {}",
+                        window.window_index,
+                        window.window_name,
+                        window.command,
+                        window.current_path
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join("  ");
             let display_text = format!(
-                "{}  {} window{}{}  {}",
+                "{}  {} window{}{}",
                 session_name,
                 window_count,
                 if window_count == 1 { "" } else { "s" },
-                attached,
-                window_names
+                attached
             );
 
-            let overflow = session_windows.len().saturating_sub(4);
-            let preview_panes = session_windows
+            let overflow = preview_windows.len().saturating_sub(4);
+            let preview_panes = preview_windows
                 .iter()
                 .take(4)
                 .enumerate()
@@ -99,16 +110,68 @@ fn session_entries(
                 })
                 .collect();
 
-            PickerEntry {
-                searchable_text: display_text.clone(),
+            let mut entries = vec![PickerEntry {
+                searchable_text: format!("{display_text}  {child_search_text}"),
                 display_text,
                 preview_title: session_name.clone(),
                 preview_panes,
                 preview_message: None,
                 current: session_name == current_session,
                 harpoon_slot: None,
-                action: PickerAction::Session { session_name },
-            }
+                hierarchy: Some(PickerHierarchy::Parent {
+                    id: session_name.clone(),
+                    expanded: false,
+                }),
+                visible: true,
+                action: PickerAction::Session {
+                    session_name: session_name.clone(),
+                },
+            }];
+
+            session_windows.sort_by_key(|window| window.window_index);
+            let child_count = session_windows.len();
+            entries.extend(
+                session_windows
+                    .into_iter()
+                    .enumerate()
+                    .map(|(position, window)| {
+                        let branch = if position + 1 == child_count {
+                            "└─"
+                        } else {
+                            "├─"
+                        };
+                        let display_text = format!(
+                            "    {branch} {}:{}  {}  {}",
+                            window.window_index,
+                            window.window_name,
+                            window.command,
+                            window.current_path
+                        );
+                        PickerEntry {
+                            searchable_text: display_text.clone(),
+                            display_text,
+                            preview_title: format!("{} / {}", session_name, window.window_name),
+                            preview_panes: vec![PreviewPane {
+                                title: format!("{}:{}", window.window_index, window.window_name),
+                                pane_id: window.pane_id,
+                                active: window.session_active_window,
+                            }],
+                            preview_message: None,
+                            current: session_name == current_session
+                                && window.session_active_window,
+                            harpoon_slot: None,
+                            hierarchy: Some(PickerHierarchy::Child {
+                                parent_id: session_name.clone(),
+                            }),
+                            visible: false,
+                            action: PickerAction::Window {
+                                session_id: session_id.clone(),
+                                window_index: window.window_index,
+                            },
+                        }
+                    }),
+            );
+            entries
         })
         .collect()
 }
@@ -153,8 +216,9 @@ mod tests {
             "older",
             &HashMap::new(),
         );
-        assert!(entries[0].display_text.starts_with("newer"));
-        assert!(entries[1].current);
+        let roots: Vec<_> = entries.iter().filter(|entry| entry.visible).collect();
+        assert!(roots[0].display_text.starts_with("newer"));
+        assert!(roots[1].current);
     }
 
     #[test]
@@ -185,7 +249,25 @@ mod tests {
             "current",
             &history,
         );
-        assert!(entries[0].display_text.starts_with("previous"));
-        assert!(entries.last().unwrap().current);
+        let roots: Vec<_> = entries.iter().filter(|entry| entry.visible).collect();
+        assert!(roots[0].display_text.starts_with("previous"));
+        assert!(roots.last().unwrap().current);
+    }
+
+    #[test]
+    fn creates_collapsed_indented_window_children() {
+        let entries = session_entries(
+            vec![
+                window("project", 0, 20, 20, true, 2),
+                window("project", 1, 20, 10, false, 2),
+            ],
+            "other",
+            &HashMap::new(),
+        );
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].display_text, "project  2 windows");
+        assert!(!entries[1].visible);
+        assert!(entries[1].display_text.starts_with("    ├─"));
+        assert!(entries[2].display_text.starts_with("    └─"));
     }
 }

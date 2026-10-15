@@ -25,7 +25,9 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{App, InputMode, PickerAction, PickerEntry, PreviewPane, RenderedPreview},
+    app::{
+        App, InputMode, PickerAction, PickerEntry, PickerHierarchy, PreviewPane, RenderedPreview,
+    },
     store::Store,
     theme::Theme,
     tmux::Tmux,
@@ -52,6 +54,8 @@ pub fn run() -> Result<()> {
                 preview_message: None,
                 current: window.current,
                 harpoon_slot: None,
+                hierarchy: None,
+                visible: true,
                 action: PickerAction::Window {
                     session_id: window.session_id,
                     window_index: window.window_index,
@@ -149,6 +153,8 @@ fn handle_key(app: &mut App, key: KeyEvent, allow_delete: bool) {
             }
             KeyCode::Enter => app.should_open = true,
             KeyCode::Backspace => app.backspace_query(),
+            KeyCode::Tab => app.toggle_selected_expansion(),
+            KeyCode::BackTab => app.toggle_all_expansions(),
             KeyCode::Down => app.move_next(),
             KeyCode::Up => app.move_previous(),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -174,6 +180,8 @@ fn handle_key(app: &mut App, key: KeyEvent, allow_delete: bool) {
                 KeyCode::Char('h') | KeyCode::Left => app.move_cursor_left(),
                 KeyCode::Char('l') | KeyCode::Right => app.move_cursor_right(),
                 KeyCode::Char('G') => app.move_last(),
+                KeyCode::Tab => app.toggle_selected_expansion(),
+                KeyCode::BackTab => app.toggle_all_expansions(),
                 KeyCode::Char('i') => app.insert_before_cursor(),
                 KeyCode::Char('a') => app.insert_after_cursor(),
                 KeyCode::Char('A') | KeyCode::Char('/') => app.insert_at_end(),
@@ -243,7 +251,7 @@ fn render(frame: &mut Frame, app: &mut App, theme: Theme, source: &str, list_tit
         .split(outer[1]);
     render_items(frame, app, columns[0], theme, list_title);
     render_preview(frame, app, columns[1], theme);
-    render_footer(frame, app, outer[2], theme);
+    render_footer(frame, app, outer[2], theme, source);
 }
 
 fn render_search(frame: &mut Frame, app: &App, area: Rect, theme: Theme, source: &str) {
@@ -299,6 +307,12 @@ fn render_items(frame: &mut Frame, app: &mut App, area: Rect, theme: Theme, titl
                 format!("{marker} "),
                 Style::default().fg(theme.accent),
             )];
+            if let Some(PickerHierarchy::Parent { expanded, .. }) = &item.hierarchy {
+                spans.push(Span::styled(
+                    if *expanded { "▾ " } else { "▸ " },
+                    Style::default().fg(theme.accent),
+                ));
+            }
             spans.extend(highlighted_spans(&item.display_text, matched, theme));
             let list_item = ListItem::new(Line::from(spans));
             if row == app.selected {
@@ -432,20 +446,62 @@ fn preview_areas(area: Rect, count: usize) -> Vec<Rect> {
     }
 }
 
-fn render_footer(frame: &mut Frame, app: &App, area: Rect, theme: Theme) {
-    let help = match app.mode {
-        InputMode::Insert => " type to filter  esc normal  ↑/↓ select  enter open  ctrl-c close ",
-        InputMode::Normal => " j/k select  i search  enter open  q close ",
+fn render_footer(frame: &mut Frame, app: &App, area: Rect, theme: Theme, source: &str) {
+    let actions = match (app.mode, source) {
+        (InputMode::Insert, "sessions") => vec![
+            ("Esc", "Normal mode"),
+            ("↑/↓", "Select"),
+            ("Tab", "Toggle session"),
+            ("Shift+Tab", "Toggle all sessions"),
+            ("Enter", "Open"),
+            ("Ctrl-C", "Close"),
+        ],
+        (InputMode::Normal, "sessions") => vec![
+            ("j/k", "Select"),
+            ("Tab", "Toggle session"),
+            ("Shift+Tab", "Toggle all sessions"),
+            ("i", "Search"),
+            ("Enter", "Open"),
+            ("q", "Close"),
+        ],
+        (InputMode::Insert, _) => vec![
+            ("Esc", "Normal mode"),
+            ("↑/↓", "Select"),
+            ("Enter", "Open"),
+            ("Ctrl-C", "Close"),
+        ],
+        (InputMode::Normal, _) => vec![
+            ("j/k", "Select"),
+            ("i", "Search"),
+            ("Enter", "Open"),
+            ("q", "Close"),
+        ],
     };
-    frame.render_widget(
-        Paragraph::new(help).style(
-            theme
-                .text()
-                .bg(theme.background)
-                .add_modifier(Modifier::DIM),
-        ),
-        area,
-    );
+    frame.render_widget(Paragraph::new(legend(actions, theme)), area);
+}
+
+fn legend(actions: Vec<(&'static str, &'static str)>, theme: Theme) -> Line<'static> {
+    let mut spans = vec![Span::raw(" ")];
+    for (index, (key, action)) in actions.into_iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(
+                "  ·  ",
+                theme.text().add_modifier(Modifier::DIM),
+            ));
+        }
+        spans.push(Span::styled(
+            format!(" {key} "),
+            Style::default()
+                .fg(theme.selection_foreground)
+                .bg(theme.selection_background)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            format!(" {action}"),
+            theme.text().add_modifier(Modifier::DIM),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
