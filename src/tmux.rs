@@ -15,6 +15,7 @@ pub struct WindowTarget {
     pub command: String,
     pub current_path: String,
     pub current: bool,
+    pub session_active_window: bool,
 }
 
 impl WindowTarget {
@@ -50,6 +51,7 @@ impl Tmux {
             "#{pane_current_command}",
             "#{pane_current_path}",
             "#{&&:#{session_attached},#{window_active}}",
+            "#{window_active}",
         ]
         .join(&separator);
 
@@ -72,13 +74,39 @@ impl Tmux {
         self.output(["show-options", "-gqv", name])
     }
 
-    pub fn switch_to_window(&self, target: &WindowTarget) -> Result<()> {
-        let client = self.output(["display-message", "-p", "#{client_name}"])?;
-        if client.is_empty() {
-            bail!("tmux did not identify the originating client");
-        }
+    pub fn current_session_name(&self) -> Result<String> {
+        self.output(["display-message", "-p", "#{session_name}"])
+    }
 
-        let qualified_window = format!("{}:{}", target.session_id, target.window_index);
+    pub fn switch_to_session(&self, session_name: &str) -> Result<()> {
+        let client = self.current_client()?;
+        self.run(["switch-client", "-c", &client, "-t", session_name])
+    }
+
+    pub fn set_option(&self, name: &str, value: &str) -> Result<()> {
+        self.run(["set-option", "-g", name, value])
+    }
+
+    pub fn unset_option(&self, name: &str) -> Result<()> {
+        self.run(["set-option", "-gu", name])
+    }
+
+    pub fn run_shell_background(&self, command: &str) -> Result<()> {
+        self.run(["run-shell", "-b", command])
+    }
+
+    pub fn session_exists(&self, session_name: &str) -> Result<bool> {
+        let status = Command::new("tmux")
+            .args(["has-session", "-t", session_name])
+            .status()
+            .context("running tmux")?;
+        Ok(status.success())
+    }
+
+    pub fn switch_to_window(&self, session_id: &str, window_index: u32) -> Result<()> {
+        let client = self.current_client()?;
+
+        let qualified_window = format!("{session_id}:{window_index}");
         self.run([
             "select-window",
             "-t",
@@ -88,8 +116,16 @@ impl Tmux {
             "-c",
             &client,
             "-t",
-            &target.session_id,
+            session_id,
         ])
+    }
+
+    fn current_client(&self) -> Result<String> {
+        let client = self.output(["display-message", "-p", "#{client_name}"])?;
+        if client.is_empty() {
+            bail!("tmux did not identify the originating client");
+        }
+        Ok(client)
     }
 
     fn output<I, S>(&self, args: I) -> Result<String>
@@ -143,7 +179,7 @@ impl Tmux {
 
 fn parse_window(line: &str) -> Result<WindowTarget> {
     let fields: Vec<&str> = line.split(FIELD_SEPARATOR).collect();
-    if fields.len() != 9 {
+    if fields.len() != 10 {
         bail!("unexpected tmux window record with {} fields", fields.len());
     }
     Ok(WindowTarget {
@@ -156,6 +192,7 @@ fn parse_window(line: &str) -> Result<WindowTarget> {
         command: fields[6].to_string(),
         current_path: fields[7].to_string(),
         current: fields[8] == "1",
+        session_active_window: fields[9] == "1",
     })
 }
 
@@ -176,6 +213,7 @@ mod tests {
             "opencode",
             "/home/example/project one",
             "1",
+            "1",
         ]
         .join(&separator);
 
@@ -183,5 +221,6 @@ mod tests {
         assert_eq!(parsed.session_name, "project one");
         assert_eq!(parsed.window_name, "agent window");
         assert!(parsed.current);
+        assert!(parsed.session_active_window);
     }
 }

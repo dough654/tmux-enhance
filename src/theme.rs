@@ -86,6 +86,38 @@ impl Theme {
     pub fn text(self) -> Style {
         Style::default().fg(self.foreground)
     }
+
+    pub fn toast_style(self) -> String {
+        format!(
+            "fg={},bg={},bold",
+            tmux_color(self.foreground),
+            tmux_color(self.accent)
+        )
+    }
+}
+
+fn tmux_color(color: Color) -> String {
+    match color {
+        Color::Reset => "default".into(),
+        Color::Black => "black".into(),
+        Color::Red => "red".into(),
+        Color::Green => "green".into(),
+        Color::Yellow => "yellow".into(),
+        Color::Blue => "blue".into(),
+        Color::Magenta => "magenta".into(),
+        Color::Cyan => "cyan".into(),
+        Color::Gray => "white".into(),
+        Color::DarkGray => "brightblack".into(),
+        Color::LightRed => "brightred".into(),
+        Color::LightGreen => "brightgreen".into(),
+        Color::LightYellow => "brightyellow".into(),
+        Color::LightBlue => "brightblue".into(),
+        Color::LightMagenta => "brightmagenta".into(),
+        Color::LightCyan => "brightcyan".into(),
+        Color::White => "brightwhite".into(),
+        Color::Indexed(index) => format!("colour{index}"),
+        Color::Rgb(red, green, blue) => format!("#{red:02x}{green:02x}{blue:02x}"),
+    }
 }
 
 fn blend(background: Color, foreground: Color, foreground_percent: u16) -> Option<Color> {

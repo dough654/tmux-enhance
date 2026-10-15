@@ -4,7 +4,7 @@ Telescope-style navigation, Harpoon-style session marks, and agent awareness for
 
 ## Status
 
-Early development. The first vertical slice is a cross-session window picker with a live terminal preview and Telescope-style insert/normal modes.
+Early development. Cross-session window search and persistent Harpoon session marks are available with live terminal previews and Telescope-style insert/normal modes.
 
 ## Development install
 
@@ -39,13 +39,34 @@ set -g @enhance-color-normal-mode-background '#e5c07b'
 set -g @enhance-color-normal-mode-foreground '#282c34'
 ```
 
+## Harpoon sessions
+
+Press `prefix + h`, then:
+
+- `a` adds the current session to the first free slot from 1–9. Adding it again keeps its existing slot.
+- `r` removes the current session from its slot.
+- `o` opens the Harpoon sessions in the same Telescope-style picker.
+- `1`–`9` jumps directly to that slot while preserving the session's active window.
+
+In the Harpoon picker, press `Esc` for normal mode and `dd` to remove the selected slot without closing the picker.
+
+Marks persist in `${XDG_DATA_HOME:-~/.local/share}/tmux-enhance/state.db`. Stopped sessions remain visible as unavailable entries until their slots are removed:
+
+```sh
+tmux-enhance harpoon list
+tmux-enhance harpoon remove 3
+```
+
+Harpoon changes appear as non-modal, theme-aware status-right toasts. Their duration defaults to four seconds and can be configured in `.tmux.conf`:
+
+```tmux
+set -g @enhance-toast-duration 4
+```
+
 ## Planned bindings
 
 | Binding | Action |
 | --- | --- |
 | `prefix + Space` | Search windows across all sessions |
 | `prefix + a` | Search active agents |
-| `prefix + h`, `a` | Add the current session to Harpoon |
-| `prefix + h`, `o` | Open the Harpoon list |
-| `prefix + h`, `1`–`9` | Jump to a Harpoon slot |
 | `prefix + Enter` | Jump to the latest agent waiting for input |

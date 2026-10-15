@@ -1,12 +1,36 @@
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ratatui::text::Text;
 
-use crate::tmux::WindowTarget;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputMode {
     Insert,
     Normal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PickerAction {
+    Window {
+        session_id: String,
+        window_index: u32,
+    },
+    Session {
+        session_name: String,
+    },
+    Unavailable {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PickerEntry {
+    pub display_text: String,
+    pub searchable_text: String,
+    pub preview_title: String,
+    pub pane_id: Option<String>,
+    pub preview_message: Option<String>,
+    pub current: bool,
+    pub harpoon_slot: Option<u8>,
+    pub action: PickerAction,
 }
 
 #[derive(Debug)]
@@ -17,7 +41,7 @@ pub struct FilteredItem {
 
 #[derive(Debug)]
 pub struct App {
-    pub items: Vec<WindowTarget>,
+    pub items: Vec<PickerEntry>,
     pub filtered: Vec<FilteredItem>,
     pub query: String,
     pub cursor_byte: usize,
@@ -29,10 +53,12 @@ pub struct App {
     pub should_open: bool,
     pub preview_dirty: bool,
     pub pending_g: bool,
+    pub pending_d: bool,
+    pub should_delete: bool,
 }
 
 impl App {
-    pub fn new(items: Vec<WindowTarget>) -> Self {
+    pub fn new(items: Vec<PickerEntry>) -> Self {
         let filtered = (0..items.len())
             .map(|index| FilteredItem {
                 index,
@@ -52,10 +78,12 @@ impl App {
             should_open: false,
             preview_dirty: true,
             pending_g: false,
+            pending_d: false,
+            should_delete: false,
         }
     }
 
-    pub fn selected_item(&self) -> Option<&WindowTarget> {
+    pub fn selected_item(&self) -> Option<&PickerEntry> {
         self.filtered
             .get(self.selected)
             .and_then(|item| self.items.get(item.index))
@@ -137,6 +165,16 @@ impl App {
         self.preview_dirty = true;
     }
 
+    pub fn remove_selected_item(&mut self) -> Option<PickerEntry> {
+        let item_index = self.filtered.get(self.selected)?.index;
+        let previous_selection = self.selected;
+        let removed = self.items.remove(item_index);
+        self.refilter();
+        self.selected = previous_selection.min(self.filtered.len().saturating_sub(1));
+        self.preview_dirty = true;
+        Some(removed)
+    }
+
     fn refilter(&mut self) {
         let matcher = SkimMatcherV2::default().smart_case();
         let mut matches: Vec<(usize, i64, Vec<usize>)> = self
@@ -148,7 +186,7 @@ impl App {
                     Some((index, 0, Vec::new()))
                 } else {
                     matcher
-                        .fuzzy_indices(&item.searchable_text(), &self.query)
+                        .fuzzy_indices(&item.searchable_text, &self.query)
                         .map(|(score, matched)| (index, score, matched))
                 }
             })
@@ -171,17 +209,20 @@ impl App {
 mod tests {
     use super::*;
 
-    fn target(session: &str, window: &str, command: &str) -> WindowTarget {
-        WindowTarget {
-            session_id: "$1".into(),
-            session_name: session.into(),
-            window_id: "@1".into(),
-            window_index: 1,
-            window_name: window.into(),
-            pane_id: "%1".into(),
-            command: command.into(),
-            current_path: "/tmp".into(),
+    fn target(session: &str, window: &str, command: &str) -> PickerEntry {
+        let display_text = format!("{session}:1  {window}  {command}  /tmp");
+        PickerEntry {
+            searchable_text: display_text.clone(),
+            display_text,
+            preview_title: format!("{session} / {window}"),
+            pane_id: Some("%1".into()),
+            preview_message: None,
             current: false,
+            harpoon_slot: None,
+            action: PickerAction::Window {
+                session_id: "$1".into(),
+                window_index: 1,
+            },
         }
     }
 

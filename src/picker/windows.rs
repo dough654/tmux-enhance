@@ -25,7 +25,8 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{App, InputMode},
+    app::{App, InputMode, PickerAction, PickerEntry},
+    store::Store,
     theme::Theme,
     tmux::Tmux,
 };
@@ -34,13 +35,38 @@ const PREVIEW_REFRESH: Duration = Duration::from_millis(500);
 
 pub fn run() -> Result<()> {
     let tmux = Tmux::from_env();
+    let entries = tmux
+        .windows()?
+        .into_iter()
+        .map(|window| {
+            let display_text = window.searchable_text();
+            PickerEntry {
+                searchable_text: display_text.clone(),
+                display_text,
+                preview_title: format!("{} / {}", window.session_name, window.window_name),
+                pane_id: Some(window.pane_id),
+                preview_message: None,
+                current: window.current,
+                harpoon_slot: None,
+                action: PickerAction::Window {
+                    session_id: window.session_id,
+                    window_index: window.window_index,
+                },
+            }
+        })
+        .collect();
+    run_entries("windows", "Windows", entries)
+}
+
+pub fn run_entries(source: &str, list_title: &str, entries: Vec<PickerEntry>) -> Result<()> {
+    let tmux = Tmux::from_env();
     let theme = Theme::from_tmux(&tmux);
-    let mut app = App::new(tmux.windows()?);
+    let mut app = App::new(entries);
     refresh_preview(&tmux, &mut app, 80);
 
     let mut terminal = setup_terminal()?;
     let _cleanup = TerminalCleanup;
-    let result = run_loop(&mut terminal, &tmux, &mut app, theme);
+    let result = run_loop(&mut terminal, &tmux, &mut app, theme, source, list_title);
     terminal.show_cursor()?;
     result
 }
@@ -50,6 +76,8 @@ fn run_loop(
     tmux: &Tmux,
     app: &mut App,
     theme: Theme,
+    source: &str,
+    list_title: &str,
 ) -> Result<()> {
     let mut last_preview = Instant::now();
     let mut cursor_mode = None;
@@ -59,13 +87,35 @@ fn run_loop(
             set_cursor_style(app.mode)?;
             cursor_mode = Some(app.mode);
         }
-        terminal.draw(|frame| render(frame, app, theme))?;
+        terminal.draw(|frame| render(frame, app, theme, source, list_title))?;
         if app.should_quit {
             return Ok(());
         }
+        if app.should_delete {
+            app.should_delete = false;
+            if let Some(slot) = app.selected_item().and_then(|item| item.harpoon_slot) {
+                Store::open()?.remove(slot)?;
+                app.remove_selected_item();
+                let preview_height = terminal.size()?.height.saturating_sub(5);
+                refresh_preview(tmux, app, preview_height);
+            }
+        }
         if app.should_open {
-            if let Some(item) = app.selected_item() {
-                tmux.switch_to_window(item)?;
+            let action = app.selected_item().map(|item| item.action.clone());
+            match action {
+                Some(PickerAction::Window {
+                    session_id,
+                    window_index,
+                }) => tmux.switch_to_window(&session_id, window_index)?,
+                Some(PickerAction::Session { session_name }) => {
+                    tmux.switch_to_session(&session_name)?
+                }
+                Some(PickerAction::Unavailable { message }) => {
+                    app.error = Some(message);
+                    app.should_open = false;
+                    continue;
+                }
+                None => {}
             }
             return Ok(());
         }
@@ -74,7 +124,7 @@ fn run_loop(
             && let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {
-            handle_key(app, key);
+            handle_key(app, key, source == "harpoon");
         }
 
         if app.preview_dirty || last_preview.elapsed() >= PREVIEW_REFRESH {
@@ -85,12 +135,13 @@ fn run_loop(
     }
 }
 
-fn handle_key(app: &mut App, key: KeyEvent) {
+fn handle_key(app: &mut App, key: KeyEvent, allow_delete: bool) {
     match app.mode {
         InputMode::Insert => match key.code {
             KeyCode::Esc => {
                 app.enter_normal_mode();
                 app.pending_g = false;
+                app.pending_d = false;
             }
             KeyCode::Enter => app.should_open = true,
             KeyCode::Backspace => app.backspace_query(),
@@ -106,10 +157,14 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         },
         InputMode::Normal => {
             let completing_gg = key.code == KeyCode::Char('g') && app.pending_g;
+            let completing_dd = allow_delete && key.code == KeyCode::Char('d') && app.pending_d;
             app.pending_g = false;
+            app.pending_d = false;
             match key.code {
                 KeyCode::Char('g') if completing_gg => app.move_first(),
                 KeyCode::Char('g') => app.pending_g = true,
+                KeyCode::Char('d') if completing_dd => app.should_delete = true,
+                KeyCode::Char('d') if allow_delete => app.pending_d = true,
                 KeyCode::Char('j') | KeyCode::Down => app.move_next(),
                 KeyCode::Char('k') | KeyCode::Up => app.move_previous(),
                 KeyCode::Char('h') | KeyCode::Left => app.move_cursor_left(),
@@ -127,8 +182,17 @@ fn handle_key(app: &mut App, key: KeyEvent) {
 }
 
 fn refresh_preview(tmux: &Tmux, app: &mut App, height: u16) {
-    let Some(pane_id) = app.selected_item().map(|item| item.pane_id.clone()) else {
+    let Some(item) = app.selected_item() else {
         app.preview = Default::default();
+        app.error = None;
+        app.preview_dirty = false;
+        return;
+    };
+    let pane_id = item.pane_id.clone();
+    let preview_message = item.preview_message.clone();
+    let Some(pane_id) = pane_id else {
+        app.preview = preview_message.unwrap_or_default().into();
+        app.error = None;
         app.preview_dirty = false;
         return;
     };
@@ -145,7 +209,7 @@ fn refresh_preview(tmux: &Tmux, app: &mut App, height: u16) {
     app.preview_dirty = false;
 }
 
-fn render(frame: &mut Frame, app: &mut App, theme: Theme) {
+fn render(frame: &mut Frame, app: &mut App, theme: Theme, source: &str, list_title: &str) {
     frame.render_widget(Block::default().style(theme.base()), frame.area());
     let outer = Layout::default()
         .direction(Direction::Vertical)
@@ -156,18 +220,18 @@ fn render(frame: &mut Frame, app: &mut App, theme: Theme) {
         ])
         .split(frame.area());
 
-    render_search(frame, app, outer[0], theme);
+    render_search(frame, app, outer[0], theme, source);
 
     let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
         .split(outer[1]);
-    render_windows(frame, app, columns[0], theme);
+    render_items(frame, app, columns[0], theme, list_title);
     render_preview(frame, app, columns[1], theme);
     render_footer(frame, app, outer[2], theme);
 }
 
-fn render_search(frame: &mut Frame, app: &App, area: Rect, theme: Theme) {
+fn render_search(frame: &mut Frame, app: &App, area: Rect, theme: Theme, source: &str) {
     let mode = match app.mode {
         InputMode::Insert => Span::styled(
             " INSERT ",
@@ -195,7 +259,7 @@ fn render_search(frame: &mut Frame, app: &App, area: Rect, theme: Theme) {
             .border_style(Style::default().fg(theme.border))
             .title_style(theme.text().add_modifier(Modifier::BOLD))
             .style(theme.base())
-            .title(" tmux-enhance / windows "),
+            .title(format!(" tmux-enhance / {source} ")),
     );
     frame.render_widget(query, area);
 
@@ -204,7 +268,7 @@ fn render_search(frame: &mut Frame, app: &App, area: Rect, theme: Theme) {
     frame.set_cursor_position(Position::new(x, area.y + 1));
 }
 
-fn render_windows(frame: &mut Frame, app: &mut App, area: Rect, theme: Theme) {
+fn render_items(frame: &mut Frame, app: &mut App, area: Rect, theme: Theme, title: &str) {
     let items: Vec<ListItem> = app
         .filtered
         .iter()
@@ -220,7 +284,7 @@ fn render_windows(frame: &mut Frame, app: &mut App, area: Rect, theme: Theme) {
                 format!("{marker} "),
                 Style::default().fg(theme.accent),
             )];
-            spans.extend(highlighted_spans(&item.searchable_text(), matched, theme));
+            spans.extend(highlighted_spans(&item.display_text, matched, theme));
             let list_item = ListItem::new(Line::from(spans));
             if row == app.selected {
                 list_item.style(
@@ -243,7 +307,7 @@ fn render_windows(frame: &mut Frame, app: &mut App, area: Rect, theme: Theme) {
                 .border_style(Style::default().fg(theme.border))
                 .title_style(theme.text().add_modifier(Modifier::BOLD))
                 .style(theme.base())
-                .title(format!(" Windows ({}) ", app.filtered.len())),
+                .title(format!(" {title} ({}) ", app.filtered.len())),
         )
         .highlight_symbol("› ")
         .highlight_style(Style::default().add_modifier(Modifier::BOLD));
@@ -282,7 +346,7 @@ fn highlighted_spans(text: &str, matched: &[usize], theme: Theme) -> Vec<Span<'s
 fn render_preview(frame: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let title = app
         .selected_item()
-        .map(|item| format!(" {} / {} ", item.session_name, item.window_name))
+        .map(|item| format!(" {} ", item.preview_title))
         .unwrap_or_else(|| " Preview ".into());
     let preview = if let Some(error) = app.error.as_deref() {
         Paragraph::new(error)
