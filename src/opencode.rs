@@ -106,7 +106,7 @@ pub fn discover(
     } else {
         HashMap::new()
     };
-    sessions.sort_by(|left, right| right.time.updated.cmp(&left.time.updated));
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.time.updated));
 
     Ok(windows
         .into_iter()
