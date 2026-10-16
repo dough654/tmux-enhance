@@ -24,8 +24,8 @@ else
 fi
 
 tmux set-option -gq @enhance-bin "$default_bin"
-tmux set-option -gq @enhance-picker-width '90%'
-tmux set-option -gq @enhance-picker-height '80%'
+tmux set-option -ogq @enhance-picker-width '90%'
+tmux set-option -ogq @enhance-picker-height '80%'
 tmux set-option -ogq @enhance-toast-duration '4'
 tmux set-option -ogq @enhance-alerts 'on'
 tmux set-option -ogq @enhance-alert-overlay 'on'
