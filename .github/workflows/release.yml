@@ -43,6 +43,11 @@ jobs:
               exit 1
             fi
           fi
+          repository_version="$(tr -d '[:space:]' < VERSION)"
+          if [[ "$repository_version" != "$cargo_version" ]]; then
+            echo "VERSION file $repository_version does not match Cargo version $cargo_version" >&2
+            exit 1
+          fi
           echo "PACKAGE_VERSION=$cargo_version" >> "$GITHUB_ENV"
 
       - name: Install Rust toolchain
@@ -88,11 +93,13 @@ jobs:
         shell: bash
         run: |
           package="tmux-enhance-${PACKAGE_VERSION}-${{ matrix.target }}"
-          mkdir -p "dist/$package/bin" "dist/$package/opencode"
+          mkdir -p "dist/$package/bin" "dist/$package/opencode" "dist/$package/scripts"
           install -m 755 "target/${{ matrix.target }}/release/tmux-enhance" "dist/$package/bin/tmux-enhance"
           install -m 755 tmux-enhance.tmux "dist/$package/tmux-enhance.tmux"
           install -m 644 README.md LICENSE "dist/$package/"
+          install -m 644 VERSION "dist/$package/VERSION"
           install -m 644 opencode/index.js opencode/tui.js opencode/package.json "dist/$package/opencode/"
+          install -m 755 scripts/install-binary.sh "dist/$package/scripts/install-binary.sh"
           tar -C dist -czf "dist/$package.tar.gz" "$package"
 
       - name: Upload packaged plugin

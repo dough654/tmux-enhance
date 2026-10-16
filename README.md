@@ -4,7 +4,7 @@ Telescope-style navigation, Harpoon-style session marks, and agent awareness for
 
 ## Status
 
-The initial feature set is complete and tmux-enhance is preparing for its first public release. Tagged releases will provide automated packages for supported Linux and macOS architectures; a zero-build TPM installation is planned next.
+The initial feature set is complete. GitHub releases provide tested packages for supported Linux and macOS architectures, and TPM installs the correct prebuilt binary automatically.
 
 ## Requirements
 
@@ -22,7 +22,23 @@ The initial feature set is complete and tmux-enhance is preparing for its first 
 
 Native Windows is not supported because tmux itself requires a Unix-like environment.
 
-## Release package install
+## Install with TPM
+
+Add tmux-enhance to `~/.tmux.conf` with [TPM](https://github.com/tmux-plugins/tpm):
+
+```tmux
+set -g @plugin 'dough654/tmux-enhance'
+```
+
+Keep `run '~/.tmux/plugins/tpm/tpm'` at the bottom of the file, reload tmux, then press `prefix + I` to install. tmux-enhance detects your operating system and architecture, downloads the matching release binary, verifies its checksum, and provisions optional OpenCode and Claude Code integrations automatically. Rust is not required.
+
+Automatic binary installation can be disabled before loading the plugin:
+
+```tmux
+set -g @enhance-auto-install 'off'
+```
+
+## Manual release install
 
 Download the archive for your platform from the [latest release](https://github.com/dough654/tmux-enhance/releases/latest), verify it against `SHA256SUMS`, and extract it into your tmux plugins directory. For example:
 

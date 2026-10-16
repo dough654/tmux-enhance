@@ -3,8 +3,21 @@
 CURRENT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 release_bin="$CURRENT_DIR/bin/tmux-enhance"
 source_bin="$CURRENT_DIR/target/release/tmux-enhance"
+configured_bin="$(tmux show-option -gqv @enhance-bin)"
 
-if [[ -x "$release_bin" ]]; then
+tmux set-option -ogq @enhance-auto-install 'on'
+auto_install="$(tmux show-option -gqv @enhance-auto-install)"
+
+if [[ -n "$configured_bin" && "$configured_bin" != "$release_bin" ]]; then
+  default_bin="$configured_bin"
+elif [[ -x "$source_bin" ]]; then
+  default_bin="$source_bin"
+elif [[ "$auto_install" == 'on' && -f "$CURRENT_DIR/scripts/install-binary.sh" ]]; then
+  if ! bash "$CURRENT_DIR/scripts/install-binary.sh" >/dev/null 2>&1; then
+    tmux display-message 'tmux-enhance could not install its release binary; run scripts/install-binary.sh for details'
+  fi
+  default_bin="$release_bin"
+elif [[ -x "$release_bin" ]]; then
   default_bin="$release_bin"
 else
   default_bin="$source_bin"

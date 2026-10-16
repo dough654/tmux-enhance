@@ -46,7 +46,15 @@ jobs:
         run: node --check opencode/index.js && node --check opencode/tui.js
 
       - name: Check tmux entrypoint syntax
-        run: bash -n tmux-enhance.tmux
+        run: |
+          bash -n tmux-enhance.tmux scripts/install-binary.sh
+          test "$(TMUX_ENHANCE_SYSTEM=Linux TMUX_ENHANCE_MACHINE=x86_64 scripts/install-binary.sh --print-target)" = x86_64-unknown-linux-musl
+          test "$(TMUX_ENHANCE_SYSTEM=Linux TMUX_ENHANCE_MACHINE=aarch64 scripts/install-binary.sh --print-target)" = aarch64-unknown-linux-musl
+          test "$(TMUX_ENHANCE_SYSTEM=Darwin TMUX_ENHANCE_MACHINE=x86_64 scripts/install-binary.sh --print-target)" = x86_64-apple-darwin
+          test "$(TMUX_ENHANCE_SYSTEM=Darwin TMUX_ENHANCE_MACHINE=arm64 scripts/install-binary.sh --print-target)" = aarch64-apple-darwin
+
+      - name: Check release version
+        run: test "$(tr -d '[:space:]' < VERSION)" = "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
 
       - name: Build release binary
         run: cargo build --locked --release
