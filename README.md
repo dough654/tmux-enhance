@@ -5,6 +5,7 @@
 [![CI](https://github.com/dough654/tmux-enhance/actions/workflows/ci.yml/badge.svg)](https://github.com/dough654/tmux-enhance/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/dough654/tmux-enhance)](https://github.com/dough654/tmux-enhance/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/dough654)
 
 tmux-enhance brings fast, keyboard-driven navigation and coding-agent awareness to tmux while preserving familiar tmux behavior.
 
@@ -250,6 +251,10 @@ Common requirements are tmux 3.7+, network access to GitHub Releases, `curl` or 
 ## Contributing
 
 Issues and pull requests are welcome. CI checks formatting, tests, strict Clippy, shell and JavaScript syntax, release version consistency, and the optimized Rust build.
+
+## Support
+
+If tmux-enhance improves your workflow, you can support its development on [Ko-fi](https://ko-fi.com/dough654).
 
 ## License
 
