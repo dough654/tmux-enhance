@@ -75,9 +75,7 @@ impl Tmux {
 
     pub fn capture_preview(&self, pane_id: &str, lines: u16) -> Result<String> {
         let output = self.output_preserving(["capture-pane", "-e", "-p", "-t", pane_id])?;
-        let line_count = output.lines().count();
-        let skip = line_count.saturating_sub(lines as usize);
-        Ok(output.lines().skip(skip).collect::<Vec<_>>().join("\n"))
+        Ok(top_lines(&output, lines))
     }
 
     pub fn option(&self, name: &str) -> Result<String> {
@@ -309,6 +307,14 @@ impl Tmux {
     }
 }
 
+fn top_lines(output: &str, lines: u16) -> String {
+    output
+        .lines()
+        .take(usize::from(lines))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn parse_window(line: &str) -> Result<WindowTarget> {
     let fields: Vec<&str> = line.split(FIELD_SEPARATOR).collect();
     if fields.len() != 15 {
@@ -368,5 +374,11 @@ mod tests {
         assert!(parsed.session_active_window);
         assert_eq!(parsed.session_windows, 4);
         assert_eq!(parsed.attached_clients, 2);
+    }
+
+    #[test]
+    fn previews_the_top_of_the_visible_pane() {
+        let output = "editor header\nimportant content\nblank lower area\n";
+        assert_eq!(top_lines(output, 2), "editor header\nimportant content");
     }
 }

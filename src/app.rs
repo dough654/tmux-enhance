@@ -72,7 +72,7 @@ pub struct PickerEntry {
     pub action: PickerAction,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FilteredItem {
     pub index: usize,
     pub matched: Vec<usize>,
@@ -108,6 +108,7 @@ impl App {
                 matched: Vec::new(),
             })
             .collect();
+        let filtered = order_hierarchy_for_bottom_up(&items, filtered);
         Self {
             items,
             filtered,
@@ -330,7 +331,7 @@ impl App {
     fn refilter(&mut self) {
         let matcher = SkimMatcherV2::default().smart_case();
         if self.query.is_empty() {
-            self.filtered = self
+            let filtered = self
                 .items
                 .iter()
                 .enumerate()
@@ -340,6 +341,7 @@ impl App {
                     matched: Vec::new(),
                 })
                 .collect();
+            self.filtered = order_hierarchy_for_bottom_up(&self.items, filtered);
             self.selected = 0;
             self.preview_dirty = true;
             return;
@@ -397,7 +399,11 @@ impl App {
                                 .into_iter()
                                 .map(|(index, _, matched)| FilteredItem { index, matched }),
                         );
-                        groups.push((parent_score.max(child_score), index, entries));
+                        groups.push((
+                            parent_score.max(child_score),
+                            index,
+                            order_hierarchy_for_bottom_up(&self.items, entries),
+                        ));
                     }
                     index = next;
                 }
@@ -428,6 +434,40 @@ impl App {
         self.selected = 0;
         self.preview_dirty = true;
     }
+}
+
+fn order_hierarchy_for_bottom_up(
+    items: &[PickerEntry],
+    filtered: Vec<FilteredItem>,
+) -> Vec<FilteredItem> {
+    let mut ordered = Vec::with_capacity(filtered.len());
+    let mut position = 0;
+    while position < filtered.len() {
+        let Some(PickerHierarchy::Parent { id, .. }) = items
+            .get(filtered[position].index)
+            .and_then(|item| item.hierarchy.as_ref())
+        else {
+            ordered.push(filtered[position].clone());
+            position += 1;
+            continue;
+        };
+
+        let mut end = position + 1;
+        while end < filtered.len()
+            && matches!(
+                items
+                    .get(filtered[end].index)
+                    .and_then(|item| item.hierarchy.as_ref()),
+                Some(PickerHierarchy::Child { parent_id }) if parent_id == id
+            )
+        {
+            end += 1;
+        }
+        ordered.extend(filtered[position + 1..end].iter().rev().cloned());
+        ordered.push(filtered[position].clone());
+        position = end;
+    }
+    ordered
 }
 
 impl PickerEntry {
@@ -569,6 +609,12 @@ mod tests {
         assert_eq!(app.filtered.len(), 1);
         app.toggle_selected_expansion();
         assert_eq!(app.filtered.len(), 2);
+        assert_eq!(app.filtered[0].index, 1);
+        assert_eq!(app.filtered[1].index, 0);
+        assert_eq!(
+            app.selected_item().unwrap().hierarchy,
+            app.items[0].hierarchy
+        );
         app.toggle_selected_expansion();
         assert_eq!(app.filtered.len(), 1);
     }
@@ -628,8 +674,8 @@ mod tests {
         app.insert_query('n');
         app.insert_query('t');
         assert_eq!(app.filtered.len(), 2);
-        assert_eq!(app.filtered[0].index, 0);
-        assert_eq!(app.filtered[1].index, 2);
+        assert_eq!(app.filtered[0].index, 2);
+        assert_eq!(app.filtered[1].index, 0);
 
         while app.cursor_byte > 0 {
             app.backspace_query();

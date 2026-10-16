@@ -1,6 +1,6 @@
 [package]
 name = "tmux-enhance"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Telescope-style navigation, Harpoon-style session marks, and agent awareness for tmux"
 license = "MIT"
