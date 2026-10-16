@@ -35,6 +35,13 @@ impl WindowTarget {
 #[derive(Debug, Clone, Copy)]
 pub struct Tmux;
 
+#[derive(Debug, PartialEq, Eq)]
+struct ClientContext {
+    name: String,
+    session_name: String,
+    pane_id: String,
+}
+
 impl Tmux {
     pub fn from_env() -> Self {
         Self
@@ -87,10 +94,16 @@ impl Tmux {
     }
 
     pub fn current_session_name(&self) -> Result<String> {
+        if let Some(context) = self.current_client_context()? {
+            return Ok(context.session_name);
+        }
         self.output(["display-message", "-p", "#{session_name}"])
     }
 
     pub fn current_pane_id(&self) -> Result<String> {
+        if let Some(context) = self.current_client_context()? {
+            return Ok(context.pane_id);
+        }
         self.output(["display-message", "-p", "#{pane_id}"])
     }
 
@@ -251,11 +264,23 @@ impl Tmux {
     }
 
     fn current_client(&self) -> Result<String> {
-        let client = self.output(["display-message", "-p", "#{client_name}"])?;
-        if client.is_empty() {
-            bail!("tmux did not identify the originating client");
+        self.current_client_context()?
+            .map(|context| context.name)
+            .ok_or_else(|| anyhow::anyhow!("tmux did not identify the originating client"))
+    }
+
+    fn current_client_context(&self) -> Result<Option<ClientContext>> {
+        let client_name = self.output(["display-message", "-p", "#{client_name}"])?;
+        if client_name.is_empty() {
+            return Ok(None);
         }
-        Ok(client)
+
+        let separator = FIELD_SEPARATOR.to_string();
+        let format = ["#{client_name}", "#{client_session}", "#{pane_id}"].join(&separator);
+        let clients = self.output(["list-clients", "-F", &format])?;
+        Ok(parse_client_contexts(&clients)
+            .into_iter()
+            .find(|context| context.name == client_name))
     }
 
     fn output<I, S>(&self, args: I) -> Result<String>
@@ -313,6 +338,21 @@ fn top_lines(output: &str, lines: u16) -> String {
         .take(usize::from(lines))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn parse_client_contexts(output: &str) -> Vec<ClientContext> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split(FIELD_SEPARATOR);
+            let context = ClientContext {
+                name: fields.next()?.to_string(),
+                session_name: fields.next()?.to_string(),
+                pane_id: fields.next()?.to_string(),
+            };
+            fields.next().is_none().then_some(context)
+        })
+        .collect()
 }
 
 fn parse_window(line: &str) -> Result<WindowTarget> {
@@ -380,5 +420,28 @@ mod tests {
     fn previews_the_top_of_the_visible_pane() {
         let output = "editor header\nimportant content\nblank lower area\n";
         assert_eq!(top_lines(output, 2), "editor header\nimportant content");
+    }
+
+    #[test]
+    fn parses_client_session_and_active_pane_context() {
+        let separator = FIELD_SEPARATOR;
+        let output = format!(
+            "/dev/pts/4{separator}acme-store{separator}%12\n/dev/pts/7{separator}orders-api{separator}%19"
+        );
+        assert_eq!(
+            parse_client_contexts(&output),
+            vec![
+                ClientContext {
+                    name: "/dev/pts/4".into(),
+                    session_name: "acme-store".into(),
+                    pane_id: "%12".into(),
+                },
+                ClientContext {
+                    name: "/dev/pts/7".into(),
+                    session_name: "orders-api".into(),
+                    pane_id: "%19".into(),
+                },
+            ]
+        );
     }
 }
