@@ -1,139 +1,176 @@
 # tmux-enhance
 
-Telescope-style navigation, Harpoon-style session marks, and agent awareness for tmux.
+**Navigate sessions like Telescope. Mark them like Harpoon. Know when your coding agents need you.**
 
-## Status
+[![CI](https://github.com/dough654/tmux-enhance/actions/workflows/ci.yml/badge.svg)](https://github.com/dough654/tmux-enhance/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/dough654/tmux-enhance)](https://github.com/dough654/tmux-enhance/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-The initial feature set is complete. GitHub releases provide tested packages for supported Linux and macOS architectures, and TPM installs the correct prebuilt binary automatically.
+tmux-enhance brings fast, keyboard-driven navigation and coding-agent awareness to tmux while preserving familiar tmux behavior.
 
-## Requirements
+- **Find anything quickly.** Search sessions and windows in one hierarchical, MRU-aware picker with live terminal previews.
+- **Keep important sessions close.** Save persistent Harpoon-style marks and jump to them by number.
+- **Stop babysitting agents.** See OpenCode and Claude Code activity in one place and get non-modal alerts when an agent needs permission or input.
 
-- tmux 3.7 or newer. Proactive notifications use tmux 3.7 floating panes so they can remain non-modal.
-- A Rust toolchain when installing from source. Release packages include a prebuilt binary.
-- OpenCode and Claude Code are optional; their integrations are provisioned automatically when present.
+Everything runs locally in one Rust binary. The interface follows your tmux theme, state is stored in SQLite, and agent notifications never steal focus.
 
-### Supported platforms
+![The tmux-enhance session picker showing hierarchical sessions and live terminal previews](docs/assets/session-picker.png)
 
-| Platform | Architectures | Release target |
-| --- | --- | --- |
-| Linux | x86_64, ARM64 | Statically linked musl binaries |
-| macOS 11+ | Intel, Apple Silicon | Native binaries |
-| Windows | x86_64 or ARM64 through WSL | Corresponding Linux binary |
+<sub>Hierarchical session navigation with adaptive live previews and theme-aware colors.</sub>
 
-Native Windows is not supported because tmux itself requires a Unix-like environment.
+## Quick start
 
-## Install with TPM
+### Requirements
 
-Add tmux-enhance to `~/.tmux.conf` with [TPM](https://github.com/tmux-plugins/tpm):
+- tmux 3.7 or newer
+- Linux or macOS on x86_64 or ARM64
+- [TPM](https://github.com/tmux-plugins/tpm)
+- `curl` or `wget` for the automatic binary download
+
+Add tmux-enhance to `~/.tmux.conf` before TPM's final `run` line:
 
 ```tmux
 set -g @plugin 'dough654/tmux-enhance'
+
+# Keep this at the bottom of .tmux.conf
+run '~/.tmux/plugins/tpm/tpm'
 ```
 
-Keep `run '~/.tmux/plugins/tpm/tpm'` at the bottom of the file, reload tmux, then press `prefix + I` to install. tmux-enhance detects your operating system and architecture, downloads the matching release binary, verifies its checksum, and provisions optional OpenCode and Claude Code integrations automatically. Rust is not required.
+Reload tmux, then press `prefix + I`. tmux-enhance detects your platform, downloads the matching release binary, verifies its SHA-256 checksum, and installs it automatically. Rust is not required.
 
-Automatic binary installation can be disabled before loading the plugin:
+Start with:
+
+| Keys | Action |
+| --- | --- |
+| `prefix + s` | Search sessions and windows |
+| `prefix + a` | View OpenCode and Claude Code agents |
+| `prefix + h`, then `a` | Mark the current session |
+| `prefix + h`, then `1`–`9` | Jump to a marked session |
+| `prefix + Enter` | Jump to the newest agent needing attention |
+
+`prefix + Space` remains tmux's native `next-layout` binding.
+
+## Telescope-style navigation
+
+Press `prefix + s` to open a unified session and window picker.
+
+- Sessions are ordered by recent use, with the previous session prioritized.
+- `Tab` expands a session to reveal its windows; `Shift + Tab` expands or collapses all sessions.
+- Search reveals matching child windows without changing your saved expansion state.
+- Live ANSI previews show up to four windows in an adaptive layout.
+- Selecting a session preserves its active window; selecting a child jumps directly to that window.
+
+The picker opens in insert mode so you can search immediately.
+
+| Mode | Keys | Action |
+| --- | --- | --- |
+| Insert | Type | Search |
+| Insert | `Up` / `Down` | Move through results |
+| Insert | `Esc` | Enter normal mode |
+| Normal | `j` / `k` | Move through results |
+| Normal | `gg` / `G` | First / last result |
+| Normal | `h` / `l` | Move through the query |
+| Normal | `i`, `a`, `A`, `/` | Return to insert mode |
+| Either | `Enter` | Open selection |
+| Normal | `q` | Close picker |
+
+Results flow from the bottom up, matching Telescope's visual movement.
+
+## Harpoon-style session marks
+
+Press `prefix + h`, then:
+
+| Key | Action |
+| --- | --- |
+| `a` | Add the current session to the first free slot |
+| `r` | Remove the current session |
+| `o` | Open marked sessions in the picker |
+| `1`–`9` | Jump directly to a slot |
+
+Marks survive tmux restarts. Stopped sessions remain visible as unavailable until removed, and `dd` removes the selected mark from the Harpoon picker.
+
+State is stored at `${XDG_DATA_HOME:-~/.local/share}/tmux-enhance/state.db`.
+
+## Coding-agent awareness
+
+Press `prefix + a` to view OpenCode and Claude Code sessions together. Statuses update live while the picker is open.
+
+| Status | Meaning | Color |
+| --- | --- | --- |
+| `PROCESSING` | The agent is working | Theme accent |
+| `PERMISSION` | The agent needs approval | Orange |
+| `INPUT` | The agent needs an answer | Cyan |
+| `READY` | The agent has finished | Green |
+
+When an agent requests permission or input, tmux-enhance shows a compact floating notification in the top-right corner. It is non-modal: your working pane remains focused and continues receiving input.
+
+- Click the notification to jump directly to that agent pane.
+- Press `prefix + Enter` to jump to the newest unresolved agent.
+- Repeated reports are deduplicated.
+- Alerts are suppressed when the agent pane is already focused.
+- Processing and completion reports automatically resolve stale alerts.
+
+Clicking notifications requires tmux mouse support:
 
 ```tmux
-set -g @enhance-auto-install 'off'
+set -g mouse on
 ```
 
-## Manual release install
+### Automatic integrations
 
-Download the archive for your platform from the [latest release](https://github.com/dough654/tmux-enhance/releases/latest), verify it against `SHA256SUMS`, and extract it into your tmux plugins directory. For example:
+Loading tmux-enhance provisions both integrations automatically:
+
+- **OpenCode:** registers the bundled terminal plugin in the global `cli.json`.
+- **Claude Code:** registers lifecycle hooks in `~/.claude/settings.json`.
+
+Installation is idempotent and preserves unrelated settings, plugins, and hooks.
+
+To inspect or repair an integration, run:
 
 ```sh
-mkdir -p ~/.tmux/plugins
-tar -xzf tmux-enhance-*-x86_64-unknown-linux-musl.tar.gz -C ~/.tmux/plugins
-mv ~/.tmux/plugins/tmux-enhance-*-x86_64-unknown-linux-musl ~/.tmux/plugins/tmux-enhance
+~/.tmux/plugins/tmux-enhance/bin/tmux-enhance doctor
+~/.tmux/plugins/tmux-enhance/bin/tmux-enhance opencode status \
+  --plugin-dir ~/.tmux/plugins/tmux-enhance/opencode
+~/.tmux/plugins/tmux-enhance/bin/tmux-enhance claude-code status
 ```
 
-Then load the packaged plugin from `~/.tmux.conf`:
+## Configuration
+
+Set options before the tmux-enhance plugin line in `~/.tmux.conf`.
+
+### Interface and notifications
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `@enhance-picker-width` | `90%` | Picker popup width |
+| `@enhance-picker-height` | `80%` | Picker popup height |
+| `@enhance-toast-duration` | `4` | Harpoon toast duration in seconds |
+| `@enhance-alerts` | `on` | Enable proactive agent alerts |
+| `@enhance-alert-overlay` | `on` | Show floating alert panes |
+| `@enhance-alert-duration` | `15` | Alert lifetime in seconds |
+| `@enhance-alert-width` | `50` | Alert width in columns |
+| `@enhance-alert-height` | `6` | Alert height in rows |
+| `@enhance-alert-ready` | `off` | Notify when processing finishes |
+| `@enhance-alert-bell` | `off` | Ring the terminal bell for alerts |
+| `@enhance-alert-native` | `off` | Also call host `notify-send` |
+| `@enhance-auto-install` | `on` | Download verified release binaries automatically |
+| `@enhance-bin` | Auto-detected | Use a custom tmux-enhance binary |
+
+Example:
 
 ```tmux
-run-shell '~/.tmux/plugins/tmux-enhance/tmux-enhance.tmux'
+set -g @enhance-alert-duration 20
+set -g @enhance-alert-ready 'on'
+set -g @enhance-picker-width '85%'
+set -g @plugin 'dough654/tmux-enhance'
 ```
 
-Release archives contain the complete plugin and do not require Rust. Each tagged version is built and smoke-tested on its native operating system before GitHub publishes the archives and checksums.
+### Theme integration
 
-## Source install
+tmux-enhance derives its canvas, foreground, borders, selection, and semantic agent colors from tmux's resolved styles. It works with theme plugins without theme-specific configuration.
 
-Clone the repository into your tmux plugins directory and build the binary:
-
-```sh
-git clone https://github.com/dough654/tmux-enhance.git ~/.tmux/plugins/tmux-enhance
-cd ~/.tmux/plugins/tmux-enhance
-cargo build --release
-```
-
-Then load it from `~/.tmux.conf`:
-
-```tmux
-run-shell '~/.tmux/plugins/tmux-enhance/tmux-enhance.tmux'
-```
-
-Reload tmux with `tmux source-file ~/.tmux.conf`. Press `prefix + s` to open the session and window picker.
-
-Press `prefix + s` to open the session picker. It prioritizes the last session you visited, keeps the current session out of the way, and previews up to four windows using an adaptive one-, two-, or four-cell layout. Press `Tab` on a session to expand or collapse its indented window list, or `Shift + Tab` to expand or collapse every session; `Enter` on a child jumps directly to that window.
-
-Searching automatically reveals matching child windows beneath their parent sessions without changing the saved expanded state. The original flat window picker remains available as `tmux-enhance picker windows`, but is no longer bound by default. `prefix + Space` is restored to tmux's native `next-layout` action.
-
-Press `prefix + a` to search OpenCode and Claude Code agent panes together. Their integrations report the exact session attached to each tmux pane and distinguish `processing`, `permission`, `input`, and `ready`; OpenCode title/path matching remains available as a fallback for unintegrated panes. Statuses refresh once per second while the picker is open. Agents use the same MRU behavior as sessions: the pane you came from is prioritized and the currently focused agent is moved to the bottom.
-
-When an agent enters `permission` or `input`, tmux-enhance shows a small floating pane in the top-right of each active tmux window. Floating panes require tmux 3.7 or newer and, unlike popups, are non-modal: the pane underneath stays focused and continues receiving input. Repeated heartbeats are deduplicated, alerts are suppressed when that agent pane is already focused, and later `processing` or `ready` reports resolve the event automatically. Click a notification to jump directly to that agent, or press `prefix + Enter` to jump to the newest unresolved agent. Clicking requires tmux mouse support (`set -g mouse on`).
-
-The overlay size and lifetime are configurable. `ready` alerts, terminal bells, and host-side `notify-send` notifications are opt-in:
-
-```tmux
-set -g @enhance-alerts 'on'
-set -g @enhance-alert-overlay 'on'
-set -g @enhance-alert-duration 15
-set -g @enhance-alert-width 50
-set -g @enhance-alert-height 6
-set -g @enhance-alert-ready 'off'
-set -g @enhance-alert-bell 'off'
-set -g @enhance-alert-native 'off'
-```
-
-### OpenCode integration
-
-Loading `tmux-enhance.tmux` automatically registers the bundled terminal plugin in OpenCode's global `cli.json`. Registration is idempotent and preserves unrelated settings and plugins. Existing OpenCode clients reload valid settings automatically; newly opened clients start reporting immediately.
-
-Check or repair the integration with:
-
-```sh
-tmux-enhance doctor
-tmux-enhance opencode status --plugin-dir /path/to/tmux-enhance/opencode
-tmux-enhance opencode install \
-  --plugin-dir /path/to/tmux-enhance/opencode \
-  --binary /path/to/tmux-enhance
-```
-
-Remove only the tmux-enhance registration with:
-
-```sh
-tmux-enhance opencode remove --plugin-dir /path/to/tmux-enhance/opencode
-```
-
-### Claude Code integration
-
-Loading `tmux-enhance.tmux` also registers tmux-enhance lifecycle hooks in Claude Code's global `~/.claude/settings.json`. Installation is idempotent and preserves unrelated settings and hooks. New or resumed Claude Code sessions report prompt, permission, elicitation, processing, and completion transitions automatically.
-
-Check, repair, or remove only the tmux-enhance hooks with:
-
-```sh
-tmux-enhance claude-code status
-tmux-enhance claude-code install --binary /path/to/tmux-enhance
-tmux-enhance claude-code remove
-```
-
-### Picker keys
-
-- The picker opens in insert mode for immediate searching.
-- Insert mode: type to search, `Esc` for normal mode, arrows to select, `Enter` to open.
-- Normal mode: `j`/`k` to select, `h`/`l` to move through the query, `i` to insert before the cursor, `a` after it, `A` or `/` at the end, `gg`/`G` for first/last, `Enter` to open, `q` to close.
-
-The picker inherits its background, foreground, and accent from tmux's resolved window, status, and pane border styles. Agent status colors are selected from the resolved status-bar palette by semantic hue: green for ready, orange for permission, light blue/cyan for input, and the active-pane accent for processing. Static colors are used only when the active theme does not expose a suitable color. When a theme exposes only its brighter status-bar surface, tmux-enhance derives a darker canvas for dark themes. Borders use the active-pane accent when the normal border would disappear into the background. The selected-row color is a subtle blend of the canvas and accent rather than tmux's often-bright copy-mode highlight. This works with theme plugins without requiring theme-specific integration. Individual colors can be overridden before loading tmux-enhance:
+<details>
+<summary>Override individual colors</summary>
 
 ```tmux
 set -g @enhance-color-background '#282c34'
@@ -150,29 +187,69 @@ set -g @enhance-color-agent-input '#2878b8'
 set -g @enhance-color-agent-ready '#15803d'
 ```
 
-## Harpoon sessions
+</details>
 
-Press `prefix + h`, then:
+## Platform support
 
-- `a` adds the current session to the first free slot from 1–9. Adding it again keeps its existing slot.
-- `r` removes the current session from its slot.
-- `o` opens the Harpoon sessions in the same Telescope-style picker.
-- `1`–`9` jumps directly to that slot while preserving the session's active window.
+| Platform | Architectures | Distribution |
+| --- | --- | --- |
+| Linux | x86_64, ARM64 | Statically linked musl binaries |
+| macOS 11+ | Intel, Apple Silicon | Native binaries |
+| Windows | x86_64 or ARM64 through WSL | Corresponding Linux binary |
 
-In the Harpoon picker, press `Esc` for normal mode and `dd` to remove the selected slot without closing the picker.
+Native Windows is not supported because tmux requires a Unix-like environment. Every tagged release is built, tested, and smoke-tested on all four native targets before publication.
 
-Marks persist in `${XDG_DATA_HOME:-~/.local/share}/tmux-enhance/state.db`. Stopped sessions remain visible as unavailable entries until their slots are removed:
+## Other installation methods
 
-```sh
-tmux-enhance harpoon list
-tmux-enhance harpoon remove 3
-```
+<details>
+<summary>Install a release archive manually</summary>
 
-Harpoon changes appear as non-modal, theme-aware status-right toasts. Their duration defaults to four seconds and can be configured in `.tmux.conf`:
+Download the archive for your platform and `SHA256SUMS` from the [latest release](https://github.com/dough654/tmux-enhance/releases/latest), verify it, and extract it into `~/.tmux/plugins/tmux-enhance`.
+
+Release archives contain the complete plugin and do not require Rust. Load the extracted plugin with:
 
 ```tmux
-set -g @enhance-toast-duration 4
+run-shell '~/.tmux/plugins/tmux-enhance/tmux-enhance.tmux'
 ```
+
+</details>
+
+<details>
+<summary>Build from source</summary>
+
+```sh
+git clone https://github.com/dough654/tmux-enhance.git ~/.tmux/plugins/tmux-enhance
+cd ~/.tmux/plugins/tmux-enhance
+cargo build --release
+```
+
+Then add this to `~/.tmux.conf`:
+
+```tmux
+run-shell '~/.tmux/plugins/tmux-enhance/tmux-enhance.tmux'
+```
+
+</details>
+
+## Troubleshooting
+
+Run the built-in diagnostics:
+
+```sh
+~/.tmux/plugins/tmux-enhance/bin/tmux-enhance doctor
+```
+
+If automatic binary installation fails, run the installer directly to see the full error:
+
+```sh
+~/.tmux/plugins/tmux-enhance/scripts/install-binary.sh
+```
+
+Common requirements are tmux 3.7+, network access to GitHub Releases, `curl` or `wget`, `tar`, and a SHA-256 tool (`sha256sum`, `shasum`, or `openssl`).
+
+## Contributing
+
+Issues and pull requests are welcome. CI checks formatting, tests, strict Clippy, shell and JavaScript syntax, release version consistency, and the optimized Rust build.
 
 ## License
 
