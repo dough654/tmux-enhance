@@ -96,6 +96,10 @@ State is stored at `${XDG_DATA_HOME:-~/.local/share}/tmux-enhance/state.db`.
 
 Press `prefix + a` to view OpenCode and Claude Code sessions together. Statuses update live while the picker is open.
 
+![The tmux-enhance agent picker showing OpenCode and Claude Code sessions with semantic statuses and a live preview](docs/assets/agent-picker.png)
+
+<sub>OpenCode and Claude Code sessions in one searchable, status-aware view.</sub>
+
 | Status | Meaning | Color |
 | --- | --- | --- |
 | `PROCESSING` | The agent is working | Theme accent |
@@ -104,6 +108,10 @@ Press `prefix + a` to view OpenCode and Claude Code sessions together. Statuses 
 | `READY` | The agent has finished | Green |
 
 When an agent requests permission or input, tmux-enhance shows a compact floating notification in the top-right corner. It is non-modal: your working pane remains focused and continues receiving input.
+
+![A non-modal tmux-enhance notification over an active Neovim session](docs/assets/agent-notification.png)
+
+<sub>Attention alerts stay out of the way and take you directly to the agent that needs you.</sub>
 
 - Click the notification to jump directly to that agent pane.
 - Press `prefix + Enter` to jump to the newest unresolved agent.
