@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-musl
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            macos_deployment_target: "11.0"
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            macos_deployment_target: "11.0"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify tag matches Cargo package version
+        shell: bash
+        run: |
+          cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag_version="${GITHUB_REF_NAME#v}"
+            if [[ "$tag_version" != "$cargo_version" ]]; then
+              echo "Tag version $tag_version does not match Cargo version $cargo_version" >&2
+              exit 1
+            fi
+          fi
+          echo "PACKAGE_VERSION=$cargo_version" >> "$GITHUB_ENV"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install Linux musl toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+
+      - name: Set macOS deployment target
+        if: runner.os == 'macOS'
+        run: echo 'MACOSX_DEPLOYMENT_TARGET=${{ matrix.macos_deployment_target }}' >> "$GITHUB_ENV"
+
+      - name: Test on host platform
+        run: cargo test --locked --release
+
+      - name: Build release binary
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
+        run: cargo build --locked --release --target '${{ matrix.target }}'
+
+      - name: Smoke test release binary
+        shell: bash
+        run: |
+          binary="target/${{ matrix.target }}/release/tmux-enhance"
+          "$binary" --version
+          file "$binary"
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            file "$binary" | grep -q 'static.*linked'
+          fi
+
+      - name: Package plugin
+        shell: bash
+        run: |
+          package="tmux-enhance-${PACKAGE_VERSION}-${{ matrix.target }}"
+          mkdir -p "dist/$package/bin" "dist/$package/opencode"
+          install -m 755 "target/${{ matrix.target }}/release/tmux-enhance" "dist/$package/bin/tmux-enhance"
+          install -m 755 tmux-enhance.tmux "dist/$package/tmux-enhance.tmux"
+          install -m 644 README.md LICENSE "dist/$package/"
+          install -m 644 opencode/index.js opencode/tui.js opencode/package.json "dist/$package/opencode/"
+          tar -C dist -czf "dist/$package.tar.gz" "$package"
+
+      - name: Upload packaged plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: tmux-enhance-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download packaged plugins
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum *.tar.gz > SHA256SUMS
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/*.tar.gz dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "tmux-enhance $GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag

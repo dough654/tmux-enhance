@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 
 CURRENT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-default_bin="$CURRENT_DIR/target/release/tmux-enhance"
+release_bin="$CURRENT_DIR/bin/tmux-enhance"
+source_bin="$CURRENT_DIR/target/release/tmux-enhance"
+
+if [[ -x "$release_bin" ]]; then
+  default_bin="$release_bin"
+else
+  default_bin="$source_bin"
+fi
 
 tmux set-option -gq @enhance-bin "$default_bin"
 tmux set-option -gq @enhance-picker-width '90%'

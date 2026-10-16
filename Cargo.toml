@@ -2,6 +2,13 @@
 name = "tmux-enhance"
 version = "0.1.0"
 edition = "2024"
+description = "Telescope-style navigation, Harpoon-style session marks, and agent awareness for tmux"
+license = "MIT"
+repository = "https://github.com/dough654/tmux-enhance"
+homepage = "https://github.com/dough654/tmux-enhance"
+readme = "README.md"
+keywords = ["tmux", "terminal", "tui", "productivity"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 ansi-to-tui = { version = "8.0.1", default-features = false }

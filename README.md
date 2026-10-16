@@ -4,21 +4,59 @@ Telescope-style navigation, Harpoon-style session marks, and agent awareness for
 
 ## Status
 
-Early development. Cross-session window search and persistent Harpoon session marks are available with live terminal previews and Telescope-style insert/normal modes.
+The initial feature set is complete and tmux-enhance is preparing for its first public release. Tagged releases will provide automated packages for supported Linux and macOS architectures; a zero-build TPM installation is planned next.
 
-## Development install
+## Requirements
+
+- tmux 3.7 or newer. Proactive notifications use tmux 3.7 floating panes so they can remain non-modal.
+- A Rust toolchain when installing from source. Release packages include a prebuilt binary.
+- OpenCode and Claude Code are optional; their integrations are provisioned automatically when present.
+
+### Supported platforms
+
+| Platform | Architectures | Release target |
+| --- | --- | --- |
+| Linux | x86_64, ARM64 | Statically linked musl binaries |
+| macOS 11+ | Intel, Apple Silicon | Native binaries |
+| Windows | x86_64 or ARM64 through WSL | Corresponding Linux binary |
+
+Native Windows is not supported because tmux itself requires a Unix-like environment.
+
+## Release package install
+
+Download the archive for your platform from the [latest release](https://github.com/dough654/tmux-enhance/releases/latest), verify it against `SHA256SUMS`, and extract it into your tmux plugins directory. For example:
 
 ```sh
+mkdir -p ~/.tmux/plugins
+tar -xzf tmux-enhance-*-x86_64-unknown-linux-musl.tar.gz -C ~/.tmux/plugins
+mv ~/.tmux/plugins/tmux-enhance-*-x86_64-unknown-linux-musl ~/.tmux/plugins/tmux-enhance
+```
+
+Then load the packaged plugin from `~/.tmux.conf`:
+
+```tmux
+run-shell '~/.tmux/plugins/tmux-enhance/tmux-enhance.tmux'
+```
+
+Release archives contain the complete plugin and do not require Rust. Each tagged version is built and smoke-tested on its native operating system before GitHub publishes the archives and checksums.
+
+## Source install
+
+Clone the repository into your tmux plugins directory and build the binary:
+
+```sh
+git clone https://github.com/dough654/tmux-enhance.git ~/.tmux/plugins/tmux-enhance
+cd ~/.tmux/plugins/tmux-enhance
 cargo build --release
 ```
 
-Then load the local checkout from `~/.tmux.conf`:
+Then load it from `~/.tmux.conf`:
 
 ```tmux
-run-shell '/home/doug/dev/tmux-plugins/tmux-enhance/tmux-enhance.tmux'
+run-shell '~/.tmux/plugins/tmux-enhance/tmux-enhance.tmux'
 ```
 
-Reload tmux. Press `prefix + s` to open the session and window picker.
+Reload tmux with `tmux source-file ~/.tmux.conf`. Press `prefix + s` to open the session and window picker.
 
 Press `prefix + s` to open the session picker. It prioritizes the last session you visited, keeps the current session out of the way, and previews up to four windows using an adaptive one-, two-, or four-cell layout. Press `Tab` on a session to expand or collapse its indented window list, or `Shift + Tab` to expand or collapse every session; `Enter` on a child jumps directly to that window.
 
@@ -119,3 +157,7 @@ Harpoon changes appear as non-modal, theme-aware status-right toasts. Their dura
 ```tmux
 set -g @enhance-toast-duration 4
 ```
+
+## License
+
+tmux-enhance is open source under the [MIT License](LICENSE).
