@@ -13,6 +13,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+const MIN_TMUX_VERSION: (u32, u32) = (3, 7);
+
 #[derive(Debug, Parser)]
 #[command(
     name = "tmux-enhance",
@@ -66,6 +68,11 @@ enum Command {
     ClaudeCode {
         #[command(subcommand)]
         command: ClaudeCodeCommand,
+    },
+    /// Manage all coding-agent integrations together.
+    Integrations {
+        #[command(subcommand)]
+        command: IntegrationsCommand,
     },
     #[command(hide = true)]
     ClaudeHook,
@@ -148,6 +155,16 @@ enum ClaudeCodeCommand {
     Remove,
     /// Check whether every tmux-enhance lifecycle hook is registered.
     Status,
+}
+
+#[derive(Debug, Subcommand)]
+enum IntegrationsCommand {
+    /// Remove tmux-enhance from OpenCode and Claude Code settings.
+    Uninstall {
+        /// Path to the bundled OpenCode plugin directory.
+        #[arg(long)]
+        plugin_dir: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -283,6 +300,9 @@ fn main() -> Result<()> {
             );
             Ok(())
         }
+        Command::Integrations {
+            command: IntegrationsCommand::Uninstall { plugin_dir },
+        } => uninstall_integrations(&plugin_dir),
         Command::ClaudeHook => claude::handle_hook(),
         Command::ToastClear { token } => notify::clear(&token),
         Command::SessionTouch { session_name } => {
@@ -313,7 +333,17 @@ fn doctor() -> Result<()> {
     let version = tmux.version()?;
     let windows = tmux.windows()?;
     let reports = store::Store::open()?.agent_reports()?;
-    println!("[OK] {version}");
+    match tmux_version(&version) {
+        Some(found) if found >= MIN_TMUX_VERSION => println!("[OK] {version}"),
+        Some(_) => println!(
+            "[WARN] {version} is too old; tmux-enhance requires tmux {}.{} or newer",
+            MIN_TMUX_VERSION.0, MIN_TMUX_VERSION.1
+        ),
+        None => println!(
+            "[WARN] could not parse '{version}'; tmux-enhance requires tmux {}.{} or newer",
+            MIN_TMUX_VERSION.0, MIN_TMUX_VERSION.1
+        ),
+    }
     println!("[OK] discovered {} windows", windows.len());
     if reports.is_empty() {
         println!("[INFO] no direct agent pane reports received yet");
@@ -325,4 +355,54 @@ fn doctor() -> Result<()> {
     }
     println!("[OK] terminal popup UI available");
     Ok(())
+}
+
+fn uninstall_integrations(plugin_dir: &std::path::Path) -> Result<()> {
+    let opencode_removed = opencode::remove_integration(plugin_dir)?;
+    let claude_removed = claude::remove_integration()?;
+    println!(
+        "OpenCode integration {}",
+        if opencode_removed {
+            "removed"
+        } else {
+            "not installed"
+        }
+    );
+    println!(
+        "Claude Code integration {}",
+        if claude_removed {
+            "removed"
+        } else {
+            "not installed"
+        }
+    );
+    Ok(())
+}
+
+fn tmux_version(output: &str) -> Option<(u32, u32)> {
+    let version = output.trim().strip_prefix("tmux ")?;
+    let (major, minor) = version.split_once('.')?;
+    let minor = minor
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect::<String>();
+    Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_stable_and_letter_suffixed_tmux_versions() {
+        assert_eq!(tmux_version("tmux 3.7"), Some((3, 7)));
+        assert_eq!(tmux_version("tmux 3.6a"), Some((3, 6)));
+        assert_eq!(tmux_version("tmux 4.0\n"), Some((4, 0)));
+    }
+
+    #[test]
+    fn rejects_unrecognized_tmux_versions() {
+        assert_eq!(tmux_version("3.8"), None);
+        assert_eq!(tmux_version("tmux next"), None);
+    }
 }

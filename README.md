@@ -134,6 +134,15 @@ Loading tmux-enhance provisions both integrations automatically:
 
 Installation is idempotent and preserves unrelated settings, plugins, and hooks.
 
+Set `@enhance-auto-integrations` to `off` before loading the plugin if you prefer to manage these changes yourself. To remove both integrations without touching unrelated settings, run:
+
+```sh
+~/.tmux/plugins/tmux-enhance/bin/tmux-enhance integrations uninstall \
+  --plugin-dir ~/.tmux/plugins/tmux-enhance/opencode
+```
+
+Run that command before deleting the plugin directory. It is safe to run repeatedly.
+
 To inspect or repair an integration, run:
 
 ```sh
@@ -154,6 +163,8 @@ Set options before the tmux-enhance plugin line in `~/.tmux.conf`.
 | `@enhance-picker-width` | `90%` | Picker popup width |
 | `@enhance-picker-height` | `80%` | Picker popup height |
 | `@enhance-toast-duration` | `4` | Harpoon toast duration in seconds |
+| `@enhance-harpoon-key` | `h` | Prefix key that opens the Harpoon key table; use `off` to disable |
+| `@enhance-auto-integrations` | `on` | Automatically register OpenCode and Claude Code integrations |
 | `@enhance-alerts` | `on` | Enable proactive agent alerts |
 | `@enhance-alert-overlay` | `on` | Show floating alert panes |
 | `@enhance-alert-duration` | `15` | Alert lifetime in seconds |
@@ -171,6 +182,7 @@ Example:
 set -g @enhance-alert-duration 20
 set -g @enhance-alert-ready 'on'
 set -g @enhance-picker-width '85%'
+set -g @enhance-harpoon-key 'm'
 set -g @plugin 'dough654/tmux-enhance'
 ```
 
@@ -194,6 +206,17 @@ set -g @enhance-color-agent-processing '#6272a4'
 set -g @enhance-color-agent-permission '#e5a84b'
 set -g @enhance-color-agent-input '#2878b8'
 set -g @enhance-color-agent-ready '#15803d'
+```
+
+</details>
+
+<details>
+<summary>Pin a specific release with TPM</summary>
+
+TPM accepts a branch or tag after `#`:
+
+```tmux
+set -g @plugin 'dough654/tmux-enhance#v0.1.5'
 ```
 
 </details>

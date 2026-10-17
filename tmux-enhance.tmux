@@ -27,6 +27,8 @@ tmux set-option -gq @enhance-bin "$default_bin"
 tmux set-option -ogq @enhance-picker-width '90%'
 tmux set-option -ogq @enhance-picker-height '80%'
 tmux set-option -ogq @enhance-toast-duration '4'
+tmux set-option -ogq @enhance-harpoon-key 'h'
+tmux set-option -ogq @enhance-auto-integrations 'on'
 tmux set-option -ogq @enhance-alerts 'on'
 tmux set-option -ogq @enhance-alert-overlay 'on'
 tmux set-option -ogq @enhance-alert-duration '15'
@@ -39,8 +41,10 @@ tmux set-option -ogq @enhance-alert-native 'off'
 enhance_bin="$(tmux show-option -gqv @enhance-bin)"
 picker_width="$(tmux show-option -gqv @enhance-picker-width)"
 picker_height="$(tmux show-option -gqv @enhance-picker-height)"
+harpoon_key="$(tmux show-option -gqv @enhance-harpoon-key)"
+auto_integrations="$(tmux show-option -gqv @enhance-auto-integrations)"
 
-if [[ -x "$enhance_bin" ]]; then
+if [[ -x "$enhance_bin" && "$auto_integrations" == 'on' ]]; then
   if [[ -d "$CURRENT_DIR/opencode" ]]; then
     "$enhance_bin" opencode install \
       --plugin-dir "$CURRENT_DIR/opencode" \
@@ -73,7 +77,9 @@ tmux bind-key -T root MouseDown1Pane if-shell -F -t = \
   "run-shell -t = \"\\\"$enhance_bin\\\" alert-click #{q:@enhance-alert-source}\"" \
   'select-pane -t = ; send-keys -M'
 
-tmux bind-key h switch-client -T enhance-harpoon
+if [[ -n "$harpoon_key" && "$harpoon_key" != 'off' ]]; then
+  tmux bind-key "$harpoon_key" switch-client -T enhance-harpoon
+fi
 tmux bind-key -T enhance-harpoon a run-shell "\"$enhance_bin\" harpoon add"
 tmux bind-key -T enhance-harpoon r run-shell "\"$enhance_bin\" harpoon remove-current"
 tmux bind-key -T enhance-harpoon o display-popup -E \
