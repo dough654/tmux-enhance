@@ -140,6 +140,42 @@ impl Tmux {
         self.run(["run-shell", "-b", command])
     }
 
+    pub fn display_picker_popup(
+        &self,
+        width: &str,
+        height: &str,
+        style: &str,
+        border_style: &str,
+        command: &str,
+    ) -> Result<()> {
+        let context = self
+            .current_client_context()?
+            .ok_or_else(|| anyhow::anyhow!("tmux did not identify the originating client"))?;
+        let client = context.name;
+        let client_env = format!("TMUX_ENHANCE_CLIENT={client}");
+        self.run([
+            "display-popup",
+            "-EE",
+            "-c",
+            &client,
+            "-t",
+            &context.pane_id,
+            "-e",
+            &client_env,
+            "-w",
+            width,
+            "-h",
+            height,
+            "-s",
+            style,
+            "-S",
+            border_style,
+            "-d",
+            "#{pane_current_path}",
+            command,
+        ])
+    }
+
     pub fn session_exists(&self, session_name: &str) -> Result<bool> {
         let status = Command::new("tmux")
             .args(["has-session", "-t", session_name])
@@ -270,7 +306,11 @@ impl Tmux {
     }
 
     fn current_client_context(&self) -> Result<Option<ClientContext>> {
-        let client_name = self.output(["display-message", "-p", "#{client_name}"])?;
+        // Background launchers must retain the client that invoked the binding.
+        let client_name = match std::env::var("TMUX_ENHANCE_CLIENT") {
+            Ok(name) if !name.is_empty() => name,
+            _ => self.output(["display-message", "-p", "#{client_name}"])?,
+        };
         if client_name.is_empty() {
             return Ok(None);
         }

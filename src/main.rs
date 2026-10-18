@@ -33,6 +33,11 @@ enum Command {
         #[command(subcommand)]
         source: PickerSource,
     },
+    #[command(hide = true)]
+    PickerPopup {
+        #[command(subcommand)]
+        source: PickerSource,
+    },
     /// Manage persistent Harpoon session slots.
     Harpoon {
         #[command(subcommand)]
@@ -169,6 +174,7 @@ enum IntegrationsCommand {
 
 fn main() -> Result<()> {
     match Cli::parse().command {
+        Command::PickerPopup { source } => picker::popup(source),
         Command::Picker {
             source: PickerSource::Windows,
         } => picker::windows::run(),
@@ -345,6 +351,10 @@ fn doctor() -> Result<()> {
         ),
     }
     println!("[OK] discovered {} windows", windows.len());
+    match opencode::check_compatibility() {
+        Ok(version) => println!("[OK] OpenCode {version} (requires 2.0 or newer)"),
+        Err(error) => println!("[WARN] {error:#}"),
+    }
     if reports.is_empty() {
         println!("[INFO] no direct agent pane reports received yet");
     } else {
@@ -392,6 +402,27 @@ fn tmux_version(output: &str) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn parses_direct_and_popup_picker_sources() {
+        for source in ["windows", "harpoon", "sessions", "agents"] {
+            assert!(matches!(
+                Cli::try_parse_from(["tmux-enhance", "picker", source])
+                    .unwrap()
+                    .command,
+                Command::Picker { .. }
+            ));
+            assert!(matches!(
+                Cli::try_parse_from(["tmux-enhance", "picker-popup", source])
+                    .unwrap()
+                    .command,
+                Command::PickerPopup { .. }
+            ));
+        }
+        let help = Cli::command().render_help().to_string();
+        assert!(!help.contains("picker-popup"));
+    }
 
     #[test]
     fn parses_stable_and_letter_suffixed_tmux_versions() {

@@ -14,6 +14,36 @@ use crate::{store::AgentReport, tmux::WindowTarget};
 
 const REPORT_TTL: Duration = Duration::from_secs(45);
 
+pub fn check_compatibility() -> Result<String> {
+    let output = Command::new("opencode")
+        .arg("--version")
+        .output()
+        .context("checking OpenCode version; the integration requires OpenCode 2.0 or newer")?;
+    if !output.status.success() {
+        bail!("could not check OpenCode version; the integration requires OpenCode 2.0 or newer");
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    check_version(&version)?;
+    Ok(version)
+}
+
+fn check_version(version: &str) -> Result<()> {
+    let number = version.strip_prefix("opencode ").unwrap_or(version);
+    let number = number.strip_prefix('v').unwrap_or(number);
+    match number
+        .split_once('.')
+        .and_then(|(major, _)| major.parse::<u32>().ok())
+    {
+        Some(major) if major >= 2 => Ok(()),
+        Some(_) => bail!(
+            "OpenCode {version} is not supported; the integration requires OpenCode 2.0 or newer. Upgrade OpenCode to use agent discovery and notifications"
+        ),
+        None => bail!(
+            "could not parse OpenCode version '{version}'; the integration requires OpenCode 2.0 or newer"
+        ),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentStatus {
     Idle,
@@ -227,6 +257,7 @@ where
         .output()
         .context("running opencode api")?;
     if !output.status.success() {
+        check_compatibility()?;
         bail!(
             "opencode api: {}",
             String::from_utf8_lossy(&output.stderr).trim()
@@ -374,6 +405,19 @@ fn write_cli_config(path: &Path, config: &Value) -> Result<()> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn requires_opencode_two_or_newer() {
+        for version in ["2.0.0", "2.0.0-beta.1", "v2.1.0", "opencode 2.0.0", "3.0.0"] {
+            assert!(check_version(version).is_ok(), "{version}");
+        }
+        let error = check_version("1.18.3").unwrap_err().to_string();
+        assert!(error.contains("1.18.3 is not supported"));
+        assert!(error.contains("requires OpenCode 2.0 or newer"));
+        for version in ["", "unknown", "2"] {
+            assert!(check_version(version).is_err(), "{version}");
+        }
+    }
 
     fn session(id: &str, title: &str, directory: &str, updated: i64) -> OpenCodeSession {
         OpenCodeSession {

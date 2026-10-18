@@ -18,7 +18,7 @@ use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Position, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListDirection, ListItem, ListState, Paragraph},
 };
@@ -96,7 +96,7 @@ fn run_entries_inner(
     let tmux = Tmux::from_env();
     let theme = Theme::from_tmux(&tmux);
     let mut app = App::new(entries);
-    refresh_preview(&tmux, &mut app, 80);
+    refresh_preview(&tmux, &mut app, 80, theme);
 
     let mut terminal = setup_terminal()?;
     let _cleanup = TerminalCleanup;
@@ -141,7 +141,7 @@ fn run_loop(
                 Store::open()?.remove(slot)?;
                 app.remove_selected_item();
                 let preview_height = terminal.size()?.height.saturating_sub(UI_VERTICAL_CHROME);
-                refresh_preview(tmux, app, preview_height);
+                refresh_preview(tmux, app, preview_height, theme);
             }
         }
         if app.should_open {
@@ -173,7 +173,7 @@ fn run_loop(
 
         if app.preview_dirty || last_preview.elapsed() >= PREVIEW_REFRESH {
             let preview_height = terminal.size()?.height.saturating_sub(UI_VERTICAL_CHROME);
-            refresh_preview(tmux, app, preview_height);
+            refresh_preview(tmux, app, preview_height, theme);
             last_preview = Instant::now();
         }
 
@@ -238,7 +238,7 @@ fn handle_key(app: &mut App, key: KeyEvent, allow_delete: bool) {
     }
 }
 
-fn refresh_preview(tmux: &Tmux, app: &mut App, height: u16) {
+fn refresh_preview(tmux: &Tmux, app: &mut App, height: u16, theme: Theme) {
     let Some(item) = app.selected_item() else {
         app.preview = Default::default();
         app.rendered_previews.clear();
@@ -263,7 +263,7 @@ fn refresh_preview(tmux: &Tmux, app: &mut App, height: u16) {
         .map(|pane| {
             let text = tmux
                 .capture_preview(&pane.pane_id, pane_height)
-                .and_then(|preview| preview.into_text().map_err(Into::into))
+                .and_then(|preview| preview_text(&preview, theme.base()))
                 .unwrap_or_else(|error| format!("Preview unavailable: {error}").into());
             RenderedPreview {
                 title: pane.title,
@@ -275,6 +275,20 @@ fn refresh_preview(tmux: &Tmux, app: &mut App, height: u16) {
     app.preview = Default::default();
     app.error = None;
     app.preview_dirty = false;
+}
+
+fn preview_text(preview: &str, base: Style) -> Result<Text<'static>> {
+    let mut text = preview.into_text()?;
+    // ANSI resets mean the picker's defaults, not tmux's separate popup defaults.
+    for span in text.lines.iter_mut().flat_map(|line| &mut line.spans) {
+        if span.style.fg == Some(Color::Reset) {
+            span.style.fg = base.fg;
+        }
+        if span.style.bg == Some(Color::Reset) {
+            span.style.bg = base.bg;
+        }
+    }
+    Ok(text)
 }
 
 fn render(frame: &mut Frame, app: &mut App, theme: Theme, source: &str, list_title: &str) {
@@ -676,5 +690,43 @@ impl Drop for TerminalCleanup {
             LeaveAlternateScreen,
             DisableMouseCapture
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_resets_use_picker_colors_without_changing_explicit_colors() {
+        let base = Style::default()
+            .fg(Color::Rgb(248, 248, 242))
+            .bg(Color::Rgb(40, 42, 54));
+        let text = preview_text(
+            "\x1b[31;48;2;10;20;30mexplicit\x1b[39;49mdefault\x1b[1mbold\x1b[0mreset",
+            base,
+        )
+        .unwrap();
+        let spans = &text.lines[0].spans;
+        assert_eq!(spans[0].style.fg, Some(Color::Red));
+        assert_eq!(spans[0].style.bg, Some(Color::Rgb(10, 20, 30)));
+        for span in &spans[1..] {
+            assert_eq!(span.style.fg, base.fg);
+            assert_eq!(span.style.bg, base.bg);
+        }
+        assert!(spans[2].style.add_modifier.contains(Modifier::BOLD));
+        assert!(!spans[3].style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn preview_defaults_follow_light_picker_colors() {
+        let base = Style::default()
+            .fg(Color::Rgb(30, 30, 30))
+            .bg(Color::Rgb(245, 245, 245));
+        let text = preview_text("\x1b[0mlight\n\x1b[44mblue\x1b[49mdefault", base).unwrap();
+        assert_eq!(text.lines[0].spans[0].style.fg, base.fg);
+        assert_eq!(text.lines[0].spans[0].style.bg, base.bg);
+        assert_eq!(text.lines[1].spans[0].style.bg, Some(Color::Blue));
+        assert_eq!(text.lines[1].spans[1].style.bg, base.bg);
     }
 }

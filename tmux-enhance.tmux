@@ -39,8 +39,6 @@ tmux set-option -ogq @enhance-alert-bell 'off'
 tmux set-option -ogq @enhance-alert-native 'off'
 
 enhance_bin="$(tmux show-option -gqv @enhance-bin)"
-picker_width="$(tmux show-option -gqv @enhance-picker-width)"
-picker_height="$(tmux show-option -gqv @enhance-picker-height)"
 harpoon_key="$(tmux show-option -gqv @enhance-harpoon-key)"
 auto_integrations="$(tmux show-option -gqv @enhance-auto-integrations)"
 
@@ -58,17 +56,11 @@ fi
 
 tmux bind-key Space next-layout
 
-tmux bind-key s display-popup -E \
-  -w "$picker_width" \
-  -h "$picker_height" \
-  -d "#{pane_current_path}" \
-  "\"$enhance_bin\" picker sessions"
+tmux bind-key s run-shell -b \
+  'TMUX_ENHANCE_CLIENT=#{q:client_name} #{q:@enhance-bin} picker-popup sessions'
 
-tmux bind-key a display-popup -E \
-  -w "$picker_width" \
-  -h "$picker_height" \
-  -d "#{pane_current_path}" \
-  "\"$enhance_bin\" picker agents"
+tmux bind-key a run-shell -b \
+  'TMUX_ENHANCE_CLIENT=#{q:client_name} #{q:@enhance-bin} picker-popup agents'
 
 tmux bind-key Enter run-shell "\"$enhance_bin\" alert-jump"
 
@@ -82,11 +74,8 @@ if [[ -n "$harpoon_key" && "$harpoon_key" != 'off' ]]; then
 fi
 tmux bind-key -T enhance-harpoon a run-shell "\"$enhance_bin\" harpoon add"
 tmux bind-key -T enhance-harpoon r run-shell "\"$enhance_bin\" harpoon remove-current"
-tmux bind-key -T enhance-harpoon o display-popup -E \
-  -w "$picker_width" \
-  -h "$picker_height" \
-  -d "#{pane_current_path}" \
-  "\"$enhance_bin\" picker harpoon"
+tmux bind-key -T enhance-harpoon o run-shell -b \
+  'TMUX_ENHANCE_CLIENT=#{q:client_name} #{q:@enhance-bin} picker-popup harpoon'
 
 for slot in {1..9}; do
   tmux bind-key -T enhance-harpoon "$slot" run-shell "\"$enhance_bin\" harpoon jump $slot"

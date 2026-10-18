@@ -127,6 +127,21 @@ impl Theme {
         )
     }
 
+    pub fn picker_popup_styles(self) -> (String, String) {
+        (
+            format!(
+                "fg={},bg={}",
+                tmux_color(self.foreground),
+                tmux_color(self.background)
+            ),
+            format!(
+                "fg={},bg={}",
+                tmux_color(self.border),
+                tmux_color(self.background)
+            ),
+        )
+    }
+
     pub fn agent_overlay_styles(self, status: &str) -> (String, String) {
         let background = match status {
             "permission" => self.agent_permission_background,
@@ -352,6 +367,41 @@ fn parse_color(value: &str) -> Option<Color> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn serializes_picker_content_and_border_styles() {
+        let mut theme = Theme {
+            background: Color::Rgb(40, 44, 52),
+            foreground: Color::Indexed(231),
+            border: Color::DarkGray,
+            accent: Color::Cyan,
+            selection_background: Color::Reset,
+            selection_foreground: Color::Reset,
+            normal_mode_background: Color::Reset,
+            normal_mode_foreground: Color::Reset,
+            agent_processing_background: Color::Reset,
+            agent_permission_background: Color::Reset,
+            agent_input_background: Color::Reset,
+            agent_ready_background: Color::Reset,
+        };
+        assert_eq!(
+            theme.picker_popup_styles(),
+            (
+                "fg=colour231,bg=#282c34".into(),
+                "fg=brightblack,bg=#282c34".into()
+            )
+        );
+        theme.background = Color::Reset;
+        theme.foreground = Color::White;
+        theme.border = Color::Indexed(8);
+        assert_eq!(
+            theme.picker_popup_styles(),
+            (
+                "fg=brightwhite,bg=default".into(),
+                "fg=colour8,bg=default".into()
+            )
+        );
+    }
 
     #[test]
     fn parses_tmux_style_colors() {

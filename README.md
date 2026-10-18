@@ -27,6 +27,7 @@ Everything runs locally in one Rust binary. The interface follows your tmux them
 - Linux or macOS on x86_64 or ARM64
 - [TPM](https://github.com/tmux-plugins/tpm)
 - `curl` or `wget` for the automatic binary download
+- OpenCode 2.0 or newer for OpenCode agent discovery and notifications (optional; OpenCode 1.x is not supported)
 
 Add tmux-enhance to `~/.tmux.conf` before TPM's final `run` line:
 
@@ -131,6 +132,8 @@ Loading tmux-enhance provisions both integrations automatically:
 
 - **OpenCode:** registers the bundled terminal plugin in the global `cli.json`.
 - **Claude Code:** registers lifecycle hooks in `~/.claude/settings.json`.
+
+The OpenCode integration requires **OpenCode 2.0 or newer** and its CLI/plugin APIs. OpenCode 1.x is not compatible. Run `tmux-enhance doctor` to check the installed version. Session/window navigation and the Claude Code integration do not require OpenCode, but an unsupported running OpenCode instance can prevent the combined agent picker from opening.
 
 Installation is idempotent and preserves unrelated settings, plugins, and hooks.
 
