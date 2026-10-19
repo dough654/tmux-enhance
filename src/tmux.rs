@@ -1,8 +1,9 @@
-use std::process::Command;
+use std::{collections::HashMap, process::Command};
 
 use anyhow::{Context, Result, bail};
 
 const FIELD_SEPARATOR: char = '\u{1f}';
+const RECORD_SEPARATOR: char = '\u{1e}';
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowTarget {
@@ -87,6 +88,29 @@ impl Tmux {
 
     pub fn option(&self, name: &str) -> Result<String> {
         self.output(["show-options", "-gqv", name])
+    }
+
+    pub fn options(&self, names: &[&str]) -> Result<HashMap<String, String>> {
+        if names.is_empty() {
+            return Ok(HashMap::new());
+        }
+        // Explicit markers preserve raw multiline values without requiring show-options -F.
+        let mut args = Vec::new();
+        for name in names {
+            if !args.is_empty() {
+                args.push(";".to_string());
+            }
+            args.extend([
+                "display-message".to_string(),
+                "-p".to_string(),
+                format!("{RECORD_SEPARATOR}{name}{FIELD_SEPARATOR}"),
+                ";".to_string(),
+                "show-options".to_string(),
+                "-gqv".to_string(),
+                name.to_string(),
+            ]);
+        }
+        Ok(parse_options(&self.output(args)?))
     }
 
     pub fn option_raw(&self, name: &str) -> Result<String> {
@@ -372,6 +396,19 @@ impl Tmux {
     }
 }
 
+fn parse_options(output: &str) -> HashMap<String, String> {
+    output
+        .split(RECORD_SEPARATOR)
+        .filter_map(|record| {
+            let (name, value) = record
+                .trim_start_matches('\n')
+                .split_once(FIELD_SEPARATOR)?;
+            let value = value.strip_prefix('\n').unwrap_or(value).trim_end();
+            Some((name.to_string(), value.to_string()))
+        })
+        .collect()
+}
+
 fn top_lines(output: &str, lines: u16) -> String {
     output
         .lines()
@@ -424,6 +461,28 @@ fn parse_window(line: &str) -> Result<WindowTarget> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_batched_options_without_unquoting_or_expanding_values() {
+        let output = concat!(
+            "\x1estatus-style\x1f\nbg=#282c34,fg=colour231\n",
+            "\x1estatus-left\x1f\n\n  #[fg=#50fa7b] \"quoted\" \\ #{session_name}\nnext line\n",
+            "\x1e@empty\x1f\n\n",
+            "\x1e@enhance-color-accent\x1f\n#61afef\n",
+            "\x1e@enhance-color-background\x1f\n",
+        );
+        let options = parse_options(output);
+        assert_eq!(options.len(), 5);
+        assert_eq!(options["status-style"], "bg=#282c34,fg=colour231");
+        assert_eq!(
+            options["status-left"],
+            "\n  #[fg=#50fa7b] \"quoted\" \\ #{session_name}\nnext line"
+        );
+        assert_eq!(options["@empty"], "");
+        assert_eq!(options["@enhance-color-accent"], "#61afef");
+        assert_eq!(options["@enhance-color-background"], "");
+        assert!(parse_options("").is_empty());
+    }
 
     #[test]
     fn parses_delimiter_safe_window_record() {
