@@ -34,7 +34,7 @@ tmux set-option -ogq @enhance-alert-overlay 'on'
 tmux set-option -ogq @enhance-alert-duration '15'
 tmux set-option -ogq @enhance-alert-width '50'
 tmux set-option -ogq @enhance-alert-height '6'
-tmux set-option -ogq @enhance-alert-ready 'off'
+tmux set-option -ogq @enhance-alert-ready 'on'
 tmux set-option -ogq @enhance-alert-bell 'off'
 tmux set-option -ogq @enhance-alert-native 'off'
 

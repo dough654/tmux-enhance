@@ -11,7 +11,7 @@ tmux-enhance brings fast, keyboard-driven navigation and coding-agent awareness 
 
 - **Find anything quickly.** Search sessions and windows in one hierarchical, MRU-aware picker with live terminal previews.
 - **Keep important sessions close.** Save persistent Harpoon-style marks and jump to them by number.
-- **Stop babysitting agents.** See OpenCode and Claude Code activity in one place and get non-modal alerts when an agent needs permission or input.
+- **Stop babysitting agents.** See OpenCode and Claude Code activity in one place and get non-modal alerts when an agent needs permission, needs input, or finishes a task for review.
 
 Everything runs locally in one Rust binary. The interface follows your tmux theme, state is stored in SQLite, and agent notifications never steal focus.
 
@@ -108,7 +108,7 @@ Press `prefix + a` to view OpenCode and Claude Code sessions together. Statuses 
 | `INPUT` | The agent needs an answer | Cyan |
 | `READY` | The agent has finished | Green |
 
-When an agent requests permission or input, tmux-enhance shows a compact floating notification in the top-right corner. It is non-modal: your working pane remains focused and continues receiving input.
+When an agent requests permission, needs input, or finishes a task for review, tmux-enhance shows a compact floating notification in the top-right corner. It is non-modal: your working pane remains focused and continues receiving input.
 
 ![A non-modal tmux-enhance notification over an active Neovim session](docs/assets/agent-notification.png)
 
@@ -173,7 +173,7 @@ Set options before the tmux-enhance plugin line in `~/.tmux.conf`.
 | `@enhance-alert-duration` | `15` | Alert lifetime in seconds |
 | `@enhance-alert-width` | `50` | Alert width in columns |
 | `@enhance-alert-height` | `6` | Alert height in rows |
-| `@enhance-alert-ready` | `off` | Notify when processing finishes |
+| `@enhance-alert-ready` | `on` | Notify when processing finishes and output is ready to review |
 | `@enhance-alert-bell` | `off` | Ring the terminal bell for alerts |
 | `@enhance-alert-native` | `off` | Also call host `notify-send` |
 | `@enhance-auto-install` | `on` | Download verified release binaries automatically |
@@ -219,7 +219,7 @@ set -g @enhance-color-agent-ready '#15803d'
 TPM accepts a branch or tag after `#`:
 
 ```tmux
-set -g @plugin 'dough654/tmux-enhance#v0.1.5'
+set -g @plugin 'dough654/tmux-enhance#v0.1.8'
 ```
 
 </details>

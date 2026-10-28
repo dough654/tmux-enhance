@@ -67,7 +67,10 @@ pub fn integration_installed() -> Result<bool> {
 
 fn hook_status(input: &Value) -> Option<&'static str> {
     match input.get("hook_event_name")?.as_str()? {
-        "SessionStart" | "Stop" | "StopFailure" | "SessionEnd" => Some("ready"),
+        // SessionStart is lifecycle setup, not evidence that work completed. Ignoring it
+        // prevents a resumed session from turning a stale processing report into a false alert.
+        "SessionStart" => None,
+        "Stop" | "StopFailure" | "SessionEnd" => Some("ready"),
         "UserPromptSubmit" | "PermissionDenied" | "PostToolUse" | "PostToolUseFailure"
         | "PostToolBatch" | "ElicitationResult" => Some("processing"),
         "PermissionRequest"
@@ -250,6 +253,10 @@ mod tests {
 
     #[test]
     fn maps_claude_events_to_agent_statuses() {
+        assert_eq!(
+            hook_status(&json!({ "hook_event_name": "SessionStart" })),
+            None
+        );
         assert_eq!(
             hook_status(&json!({ "hook_event_name": "UserPromptSubmit" })),
             Some("processing")

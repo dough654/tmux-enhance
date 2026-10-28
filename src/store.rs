@@ -34,6 +34,7 @@ pub struct AgentReport {
 pub struct AgentTransition {
     pub report: AgentReport,
     pub changed: bool,
+    pub previous_status: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -260,6 +261,13 @@ impl Store {
                     || previous_status != status
             },
         );
+        let previous_status =
+            previous
+                .as_ref()
+                .and_then(|(previous_provider, previous_session, previous_status)| {
+                    (previous_provider == provider && previous_session == session_id)
+                        .then(|| previous_status.clone())
+                });
         let now = timestamp_millis();
         self.connection.execute(
             "INSERT INTO agent_reports (pane_id, provider, session_id, status, title, reported_at)
@@ -293,18 +301,7 @@ impl Store {
 
         if matches!(status, "permission" | "input") {
             if changed {
-                self.connection.execute(
-                    "INSERT INTO agent_alerts
-                        (pane_id, provider, session_id, status, title, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                     ON CONFLICT(pane_id) DO UPDATE SET
-                        provider = excluded.provider,
-                        session_id = excluded.session_id,
-                        status = excluded.status,
-                        title = excluded.title,
-                        created_at = excluded.created_at",
-                    params![pane_id, provider, session_id, status, report.title, now],
-                )?;
+                self.queue_agent_alert(&report)?;
             } else {
                 self.connection.execute(
                     "UPDATE agent_alerts SET title = ?1 WHERE pane_id = ?2",
@@ -315,7 +312,11 @@ impl Store {
             self.acknowledge_agent_alert(pane_id)?;
         }
 
-        Ok(AgentTransition { report, changed })
+        Ok(AgentTransition {
+            report,
+            changed,
+            previous_status,
+        })
     }
 
     pub fn agent_reports(&self) -> Result<HashMap<String, AgentReport>> {
@@ -354,6 +355,29 @@ impl Store {
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
+    }
+
+    pub fn queue_agent_alert(&self, report: &AgentReport) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO agent_alerts
+                (pane_id, provider, session_id, status, title, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(pane_id) DO UPDATE SET
+                provider = excluded.provider,
+                session_id = excluded.session_id,
+                status = excluded.status,
+                title = excluded.title,
+                created_at = excluded.created_at",
+            params![
+                &report.pane_id,
+                &report.provider,
+                &report.session_id,
+                &report.status,
+                &report.title,
+                report.reported_at
+            ],
+        )?;
+        Ok(())
     }
 
     pub fn acknowledge_agent_alert(&self, pane_id: &str) -> Result<bool> {
@@ -462,6 +486,7 @@ mod tests {
         assert_eq!(report.session_id, "ses_123");
         assert_eq!(report.status, "permission");
         assert_eq!(report.title, "Review");
+        assert_eq!(transition.previous_status, None);
     }
 
     #[test]
@@ -470,7 +495,7 @@ mod tests {
         store
             .report_agent("%12", "claude", "session-123", "processing", "Fix tests")
             .unwrap();
-        store
+        let transition = store
             .report_agent("%12", "claude", "session-123", "ready", "")
             .unwrap();
 
@@ -478,6 +503,7 @@ mod tests {
         let report = reports.get("%12").unwrap();
         assert_eq!(report.status, "ready");
         assert_eq!(report.title, "Fix tests");
+        assert_eq!(transition.previous_status.as_deref(), Some("processing"));
     }
 
     #[test]
@@ -500,5 +526,36 @@ mod tests {
             .report_agent("%12", "claude", "session-123", "processing", "")
             .unwrap();
         assert!(store.agent_alerts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn queues_a_ready_report_for_review_when_requested() {
+        let store = store();
+        store
+            .report_agent("%12", "claude", "session-123", "processing", "Fix tests")
+            .unwrap();
+        let transition = store
+            .report_agent("%12", "claude", "session-123", "ready", "")
+            .unwrap();
+
+        assert!(store.agent_alerts().unwrap().is_empty());
+        store.queue_agent_alert(&transition.report).unwrap();
+        let alerts = store.agent_alerts().unwrap();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].status, "ready");
+        assert_eq!(alerts[0].title, "Fix tests");
+    }
+
+    #[test]
+    fn a_new_session_does_not_inherit_the_previous_status() {
+        let store = store();
+        store
+            .report_agent("%12", "claude", "session-123", "processing", "First task")
+            .unwrap();
+        let transition = store
+            .report_agent("%12", "claude", "session-456", "ready", "New session")
+            .unwrap();
+
+        assert_eq!(transition.previous_status, None);
     }
 }

@@ -28,7 +28,11 @@ pub fn report(
     let store = Store::open()?;
     let transition = store.report_agent(pane_id, provider, session_id, status, title)?;
     if transition.changed {
-        let _ = handle_transition(&store, &transition.report);
+        let _ = handle_transition(
+            &store,
+            &transition.report,
+            transition.previous_status.as_deref(),
+        );
     }
     Ok(())
 }
@@ -44,7 +48,7 @@ pub fn jump_latest() -> Result<()> {
             report.provider == alert.provider
                 && report.session_id == alert.session_id
                 && report.status == alert.status
-                && needs_attention(&report.status)
+                && is_actionable(&report.status)
         });
         let window = windows.iter().find(|window| {
             window.pane_id == alert.pane_id && is_agent_window(window, &alert.provider)
@@ -62,7 +66,7 @@ pub fn jump_latest() -> Result<()> {
         return Ok(());
     }
 
-    notify::show("No agents need attention")
+    notify::show("No agent alerts")
 }
 
 pub fn jump_to(pane_id: &str) -> Result<()> {
@@ -92,7 +96,11 @@ fn is_any_agent_window(window: &WindowTarget) -> bool {
         || window.pane_title.starts_with("OC | ")
 }
 
-fn handle_transition(store: &Store, report: &AgentReport) -> Result<()> {
+fn handle_transition(
+    store: &Store,
+    report: &AgentReport,
+    previous_status: Option<&str>,
+) -> Result<()> {
     let tmux = Tmux::from_env();
     if !needs_attention(&report.status) {
         tmux.close_floating_alerts(Some(&report.pane_id))?;
@@ -110,12 +118,19 @@ fn handle_transition(store: &Store, report: &AgentReport) -> Result<()> {
         return Ok(());
     }
 
-    let ready_enabled = option_enabled(&tmux.option("@enhance-alert-ready").unwrap_or_default());
-    if !(needs_attention(&report.status) || report.status == "ready" && ready_enabled) {
+    let ready_enabled = option_enabled_with_default(
+        &tmux.option("@enhance-alert-ready").unwrap_or_default(),
+        true,
+    );
+    let ready_for_review = completed_processing(&report.status, previous_status) && ready_enabled;
+    if !(needs_attention(&report.status) || ready_for_review) {
         return Ok(());
     }
     if !option_enabled_with_default(&tmux.option("@enhance-alerts").unwrap_or_default(), true) {
         return Ok(());
+    }
+    if ready_for_review {
+        store.queue_agent_alert(report)?;
     }
 
     let window = tmux
@@ -165,6 +180,14 @@ fn is_agent_window(window: &WindowTarget, provider: &str) -> bool {
 
 fn needs_attention(status: &str) -> bool {
     matches!(status, "permission" | "input")
+}
+
+fn completed_processing(status: &str, previous_status: Option<&str>) -> bool {
+    status == "ready" && previous_status == Some("processing")
+}
+
+fn is_actionable(status: &str) -> bool {
+    needs_attention(status) || status == "ready"
 }
 
 fn provider_label(provider: &str) -> &str {
@@ -262,7 +285,7 @@ fn render_overlay(status: &str, location: &str, width: u16, remaining: u16) -> S
     let sentence = match status {
         "permission" => format!("Agent in {location} is asking for permission"),
         "input" => format!("Agent in {location} needs your input"),
-        "ready" => format!("Agent in {location} has finished processing"),
+        "ready" => format!("Agent in {location} finished and is ready for review"),
         _ => format!("Agent in {location} is processing"),
     };
     let sentence = wrap_to_width(&sentence, content_width)
@@ -368,6 +391,15 @@ mod tests {
         assert!(needs_attention("input"));
         assert!(!needs_attention("ready"));
         assert!(!needs_attention("processing"));
+        assert!(is_actionable("ready"));
+    }
+
+    #[test]
+    fn identifies_only_real_processing_completions() {
+        assert!(completed_processing("ready", Some("processing")));
+        assert!(!completed_processing("ready", None));
+        assert!(!completed_processing("ready", Some("input")));
+        assert!(!completed_processing("processing", Some("ready")));
     }
 
     #[test]
@@ -385,7 +417,7 @@ mod tests {
         );
         assert!(
             render_overlay("ready", "work/agent", 58, 8)
-                .contains("Agent in work/agent has finished processing")
+                .contains("Agent in work/agent finished and is ready for review")
         );
     }
 
